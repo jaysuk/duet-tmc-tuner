@@ -20,8 +20,12 @@ export interface DriverFamily {
 	label: string;
 	/** Specific chips this family covers (shown in the chip picker). */
 	chips: ReadonlyArray<string>;
+	/** A representative chip name for auto-detection display, e.g. "TMC2209". */
+	defaultChip: string;
 	/** Default driver clock (Hz) used by the autotune formulas; user-overridable in the UI. */
 	fclk: number;
+	/** Default stealthChop PWM frequency target (Hz). 22xx run quiet at 55 kHz; 5160/2240 at 20 kHz. */
+	pwmFreqTarget: number;
 	/** CHOPCONF + PWMCONF (the two registers the chopper/PWM autotune writes). */
 	registers: { chopconf: RegisterDef; pwmconf: RegisterDef };
 	/** Whether the tuner can compute + write this family yet. */
@@ -46,7 +50,8 @@ const tmc22xxChopconf: RegisterDef = {
 	},
 };
 
-const tmc22xxPwmconf: RegisterDef = {
+// PWMCONF (0x70) has the same layout across TMC220x/222x, TMC2160/5160 and TMC2240, so it is shared.
+const sharedPwmconf: RegisterDef = {
 	name: "PWMCONF",
 	address: 0x70, // 112
 	fields: {
@@ -61,32 +66,58 @@ const tmc22xxPwmconf: RegisterDef = {
 	},
 };
 
+// ── TMC2160 / 5160 / 2240 (SPI) — CHOPCONF 0x6C ─────────────────────────────────────────────────
+// TOFF/HSTRT/HEND/TBL/MRES sit at the SAME positions as the 22xx family, so the autotuned fields pack
+// identically. The differences are CHM (bit 14) and TPFD (bits 20–23) instead of 22xx's VSENSE; the
+// tuner leaves CHM/TPFD untouched (read-modify-write) — they're declared for accurate read-back.
+const tmc51xxChopconf: RegisterDef = {
+	name: "CHOPCONF",
+	address: 0x6C, // 108
+	fields: {
+		toff: { bit: 0, width: 4 },
+		hstrt: { bit: 4, width: 3, offset: -1 },
+		hend: { bit: 7, width: 4, offset: 3 },
+		chm: { bit: 14, width: 1 },
+		tbl: { bit: 15, width: 2 },
+		tpfd: { bit: 20, width: 4 },
+		mres: { bit: 24, width: 4 },
+		intpol: { bit: 28, width: 1 },
+		dedge: { bit: 29, width: 1 },
+		diss2g: { bit: 30, width: 1 },
+		diss2vs: { bit: 31, width: 1 },
+	},
+};
+
 export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 	tmc22xx: {
 		id: "tmc22xx",
 		label: "TMC2208 / 2209 / 2225 / 2226",
 		chips: ["TMC2208", "TMC2209", "TMC2225", "TMC2226"],
+		defaultChip: "TMC2209",
 		fclk: 12_000_000, // internal oscillator (datasheet nominal)
-		registers: { chopconf: tmc22xxChopconf, pwmconf: tmc22xxPwmconf },
+		pwmFreqTarget: 55_000,
+		registers: { chopconf: tmc22xxChopconf, pwmconf: sharedPwmconf },
 		supported: true,
 	},
-	// ── Planned: SPI families. Layouts differ (e.g. 5160 CHOPCONF has TPFD/chm bits; PWMCONF adds
-	//    PWM_REG/PWM_LIM positions; both add TPOWERDOWN/TPWMTHRS handling). Filled in next. ──────────
 	tmc5160: {
 		id: "tmc5160",
 		label: "TMC2160 / 5160",
 		chips: ["TMC2160", "TMC5160"],
-		fclk: 12_000_000,
-		registers: { chopconf: tmc22xxChopconf, pwmconf: tmc22xxPwmconf }, // placeholder until 5160 map added
-		supported: false,
+		defaultChip: "TMC5160",
+		fclk: 12_000_000, // Duet drives these from a 12 MHz external clock
+		pwmFreqTarget: 20_000, // 5160s run hot at high PWM frequency
+		registers: { chopconf: tmc51xxChopconf, pwmconf: sharedPwmconf },
+		supported: true,
 	},
 	tmc2240: {
 		id: "tmc2240",
 		label: "TMC2240",
 		chips: ["TMC2240"],
-		fclk: 12_500_000,
-		registers: { chopconf: tmc22xxChopconf, pwmconf: tmc22xxPwmconf }, // placeholder until 2240 map added
-		supported: false,
+		defaultChip: "TMC2240",
+		fclk: 12_500_000, // internal oscillator
+		pwmFreqTarget: 20_000,
+		registers: { chopconf: tmc51xxChopconf, pwmconf: sharedPwmconf },
+		supported: true,
 	},
 };
 

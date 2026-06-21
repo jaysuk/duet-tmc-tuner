@@ -4,6 +4,7 @@
  *
  * Kept free of store imports so it's unit-testable; the component passes `machineStore.model` in.
  */
+import type { FamilyId } from "./drivers";
 
 interface OmDriverId {
 	board?: number;
@@ -13,13 +14,22 @@ interface OmDriverId {
 
 interface OmAxisLike {
 	letter?: string;
+	current?: number; // run current, mA
 	drivers?: Array<OmDriverId | string | number>;
 }
 interface OmExtruderLike {
+	current?: number; // run current, mA
 	driver?: OmDriverId | string | number;
 }
+interface OmBoardLike {
+	canAddress?: number | null;
+	name?: string;
+	shortName?: string;
+	vIn?: { current?: number };
+	drivers?: ArrayLike<unknown> | null;
+}
 interface OmModel {
-	boards?: Array<{ vIn?: { current?: number } } | null>;
+	boards?: Array<OmBoardLike | null>;
 	move?: { axes?: Array<OmAxisLike>; extruders?: Array<OmExtruderLike> };
 }
 
@@ -68,6 +78,104 @@ export function listDrivers(model: unknown): Array<DriverChoice> {
 	}
 	(m?.move?.extruders ?? []).forEach((ex, i) => add(driverIdToString(ex.driver), `E${i}`));
 	return out;
+}
+
+/** A driver discovered from the object model, with its inferred chip family. */
+export interface DiscoveredDriver {
+	/** `M569.2 P` value, "<canAddress>.<index>" (e.g. "0.0" main, "121.0" toolboard). */
+	id: string;
+	/** Board short name, e.g. "MB6HC" or "TOOL1LC". */
+	board: string;
+	/** Inferred driver family, or null when the board is unknown (user must pick). */
+	family: FamilyId | null;
+	/** Representative chip for display, e.g. "TMC5160" — null when unknown. */
+	chip: string | null;
+	/** False for boards with external drivers (6XD/1XD) or Duet 2 (TMC2660, unsupported in 3.7+). */
+	tuneable: boolean;
+	/** Axis/extruder this driver is assigned to (e.g. "X", "E0"), when configured. */
+	assignedTo?: string;
+	/** Friendly label for the picker, e.g. "X — TMC5160 (0.0)". */
+	label: string;
+}
+
+interface BoardFamily {
+	family: FamilyId | null;
+	chip: string | null;
+	tuneable: boolean;
+}
+
+/** Infer the TMC driver family from a board's short name / name. */
+export function boardFamily(board: { shortName?: string; name?: string }): BoardFamily {
+	const s = `${board.shortName ?? ""} ${board.name ?? ""}`.toUpperCase();
+	if (/6XD|1XD|EXP1XD/.test(s)) return { family: null, chip: null, tuneable: false }; // external step/dir
+	if (/DUET\s*2|MAESTRO|WIFI|ETHERNET/.test(s)) return { family: null, chip: "TMC2660", tuneable: false }; // Duet 2 — not supported in 3.7+
+	if (/MINI/.test(s)) return { family: "tmc22xx", chip: "TMC2209", tuneable: true };
+	if (/1LC|TOOL/.test(s)) return { family: "tmc22xx", chip: "TMC2209", tuneable: true };
+	if (/2240/.test(s)) return { family: "tmc2240", chip: "TMC2240", tuneable: true };
+	if (/6HC|3HC/.test(s)) return { family: "tmc5160", chip: "TMC5160", tuneable: true };
+	return { family: null, chip: null, tuneable: false };
+}
+
+/** Map a driver id ("b.d") to the axis/extruder it's assigned to, if any. */
+function assignmentFor(model: OmModel): Map<string, string> {
+	const map = new Map<string, string>();
+	for (const ax of model?.move?.axes ?? []) {
+		for (const d of ax.drivers ?? []) {
+			const id = driverIdToString(d);
+			if (id && ax.letter) map.set(id, ax.letter);
+		}
+	}
+	(model?.move?.extruders ?? []).forEach((ex, i) => {
+		const id = driverIdToString(ex.driver);
+		if (id) map.set(id, `E${i}`);
+	});
+	return map;
+}
+
+/**
+ * Enumerate every physical driver across all boards (main, expansion and toolboards) from the object
+ * model, inferring each one's TMC family from its board. This is how the plugin determines which
+ * drivers are fitted and tuneable on the STM32 port, where the chip type isn't in the model.
+ */
+export function discoverDrivers(model: unknown): Array<DiscoveredDriver> {
+	const m = model as OmModel;
+	const assigned = assignmentFor(m);
+	const out: Array<DiscoveredDriver> = [];
+	for (const board of m?.boards ?? []) {
+		if (!board) continue;
+		const count = board.drivers?.length ?? 0;
+		if (!count) continue;
+		const fam = boardFamily(board);
+		const canAddr = board.canAddress ?? 0;
+		const boardName = board.shortName || board.name || `board ${canAddr}`;
+		for (let j = 0; j < count; j++) {
+			const id = `${canAddr}.${j}`;
+			const axis = assigned.get(id);
+			const chipText = fam.chip ?? "unknown";
+			out.push({
+				id, board: boardName, family: fam.family, chip: fam.chip, tuneable: fam.tuneable,
+				assignedTo: axis,
+				label: `${axis ? axis + " — " : ""}${chipText} (${id})${fam.tuneable ? "" : " — not tuneable"}`,
+			});
+		}
+	}
+	return out;
+}
+
+/** Run (operating) current in amps for a driver id, from the axis/extruder it drives. Null if unknown. */
+export function readRunCurrent(model: unknown, driverId: string): number | null {
+	const m = model as OmModel;
+	for (const ax of m?.move?.axes ?? []) {
+		if ((ax.drivers ?? []).some((d) => driverIdToString(d) === driverId) && typeof ax.current === "number") {
+			return ax.current / 1000;
+		}
+	}
+	for (const ex of m?.move?.extruders ?? []) {
+		if (driverIdToString(ex.driver) === driverId && typeof ex.current === "number") {
+			return ex.current / 1000;
+		}
+	}
+	return null;
 }
 
 /**

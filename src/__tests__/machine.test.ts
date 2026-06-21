@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { listDrivers, parseRegisterValue, readVin } from "../model/machine";
+import { boardFamily, discoverDrivers, listDrivers, parseRegisterValue, readRunCurrent, readVin } from "../model/machine";
 
 describe("parseRegisterValue", () => {
 	it("parses a hex value after 'value'", () => {
@@ -56,5 +56,51 @@ describe("listDrivers", () => {
 			move: { axes: [{ letter: "X", drivers: [{ board: 0, driver: 0 }] }, { letter: "U", drivers: [{ board: 0, driver: 0 }] }] },
 		};
 		expect(listDrivers(model).map((d) => d.id)).toEqual(["0.0"]);
+	});
+});
+
+describe("boardFamily", () => {
+	it("infers the family from the board short name", () => {
+		expect(boardFamily({ shortName: "MB6HC" }).family).toBe("tmc5160");
+		expect(boardFamily({ shortName: "EXP3HC" }).family).toBe("tmc5160");
+		expect(boardFamily({ shortName: "Mini5plus" }).family).toBe("tmc22xx");
+		expect(boardFamily({ shortName: "TOOL1LC" }).family).toBe("tmc22xx");
+	});
+	it("flags external-driver and Duet 2 boards as not tuneable", () => {
+		expect(boardFamily({ shortName: "MB6XD" }).tuneable).toBe(false);
+		expect(boardFamily({ name: "Duet 2 WiFi" }).tuneable).toBe(false);
+	});
+});
+
+describe("discoverDrivers", () => {
+	// Mainboard (5160) + toolboard on CAN address 121 (2209), with X and E0 assigned.
+	const model = {
+		boards: [
+			{ canAddress: 0, shortName: "MB6HC", drivers: { length: 6 } },
+			{ canAddress: 121, shortName: "TOOL1LC", drivers: { length: 1 } },
+		],
+		move: {
+			axes: [{ letter: "X", current: 1600, drivers: ["0.0"] }],
+			extruders: [{ current: 800, driver: "121.0" }],
+		},
+	};
+
+	it("enumerates drivers across the main + tool boards with inferred families", () => {
+		const d = discoverDrivers(model);
+		expect(d.length).toBe(7); // 6 on the mainboard + 1 on the toolboard
+		const main0 = d.find((x) => x.id === "0.0")!;
+		expect(main0.family).toBe("tmc5160");
+		expect(main0.chip).toBe("TMC5160");
+		expect(main0.assignedTo).toBe("X");
+		const tool = d.find((x) => x.id === "121.0")!;
+		expect(tool.family).toBe("tmc22xx");
+		expect(tool.chip).toBe("TMC2209");
+		expect(tool.assignedTo).toBe("E0");
+	});
+
+	it("reads run current (A) for a driver from its axis/extruder", () => {
+		expect(readRunCurrent(model, "0.0")).toBeCloseTo(1.6, 6);
+		expect(readRunCurrent(model, "121.0")).toBeCloseTo(0.8, 6);
+		expect(readRunCurrent(model, "0.5")).toBeNull();
 	});
 });

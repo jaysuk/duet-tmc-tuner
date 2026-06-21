@@ -19,12 +19,15 @@ A Duet Web Control **3.7** plugin (Vue 3 / Vuetify 4).
 
 ## Requirements & scope
 
-- A **Duet 3** board whose drivers are **TMC2208 / 2209 / 2225 / 2226** (these share one register
-  layout). `M569.2` register access is supported on Duet 3 main + expansion boards from RRF 3.3/3.4.
-- Support for the SPI families **TMC2160 / 5160** and **TMC2240** is planned — the architecture is in
-  place (per-family register maps); they're listed but not yet selectable.
+- A **Duet 3** board. Supported driver families: **TMC2208 / 2209 / 2225 / 2226**, **TMC2160 / 5160**
+  and **TMC2240**. `M569.2` register access works on Duet 3 main, expansion and tool boards (RRF
+  3.3/3.4+). Boards with external drivers (6XD/1XD) and Duet 2 (TMC2660) are not tuneable this way.
+- **Drivers are auto-detected from the object model** across the mainboard, expansion boards and
+  toolboards — the plugin infers each driver's chip family from its board and reads the run current,
+  so you usually just pick the driver and the motor. You can override the chip/voltage/clock by hand.
 - A motor datasheet (or a database match) for resistance, inductance, holding torque, rated current
-  and steps/rev.
+  and steps/rev. The built-in database is kept in sync with the upstream community motor list by a
+  scheduled workflow (`update-motors`) that opens a PR when new motors appear.
 
 > ⚠️ Direct register writes are powerful. Always review the decoded values, test at low speed, and keep
 > a copy of your working config. RRF programs these registers itself from `M569`/`M906`/microstepping,

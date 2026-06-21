@@ -41,21 +41,23 @@
 								<v-col cols="12" md="6">
 									<div class="text-subtitle-2 mb-2">Driver</div>
 									<v-row dense>
+										<v-col cols="6"><v-combobox v-model="driver" :items="driverIdItems" label="Driver (M569.2 P)" :hint="detectedHint" persistent-hint density="compact" variant="outlined" /></v-col>
 										<v-col cols="6"><v-select v-model="chip" :items="chipItems" label="Driver chip" density="compact" variant="outlined" hide-details /></v-col>
-										<v-col cols="6"><v-combobox v-model="driver" :items="driverItems" label="Driver (M569.2 P)" density="compact" variant="outlined" hide-details /></v-col>
-										<v-col cols="6"><v-text-field v-model.number="volts" type="number" label="Supply voltage (V)" density="compact" variant="outlined" hide-details /></v-col>
-										<v-col cols="6"><v-text-field v-model.number="fclk" type="number" label="Driver clock (Hz)" density="compact" variant="outlined" hide-details /></v-col>
+										<v-col cols="4"><v-text-field v-model.number="volts" type="number" label="Voltage (V)" density="compact" variant="outlined" hide-details class="mt-2" /></v-col>
+										<v-col cols="4"><v-text-field v-model.number="runCurrent" type="number" label="Run current (A)" density="compact" variant="outlined" hide-details clearable placeholder="rated" class="mt-2" /></v-col>
+										<v-col cols="4"><v-text-field v-model.number="fclk" type="number" label="Clock (Hz)" density="compact" variant="outlined" hide-details class="mt-2" /></v-col>
 									</v-row>
 									<div class="text-caption text-medium-emphasis mt-1">
-										Also planned: TMC2160 / 5160 and TMC2240 (different register maps).
+										Drivers on the mainboard, expansion and toolboards are auto-detected from the object model.
 									</div>
 									<v-expansion-panels class="mt-2" variant="accordion">
 										<v-expansion-panel title="Advanced (chopper)">
 											<v-expansion-panel-text>
 												<v-row dense>
-													<v-col cols="4"><v-text-field v-model.number="toff" type="number" label="TOFF (1–15)" density="compact" variant="outlined" hide-details /></v-col>
-													<v-col cols="4"><v-text-field v-model.number="tbl" type="number" label="TBL (0–3)" density="compact" variant="outlined" hide-details /></v-col>
-													<v-col cols="4"><v-text-field v-model.number="pwmFreqTargetHz" type="number" label="PWM freq target (Hz)" density="compact" variant="outlined" hide-details /></v-col>
+													<v-col cols="3"><v-text-field v-model.number="toff" type="number" label="TOFF (1–15)" density="compact" variant="outlined" hide-details /></v-col>
+													<v-col cols="3"><v-text-field v-model.number="tbl" type="number" label="TBL (0–3)" density="compact" variant="outlined" hide-details /></v-col>
+													<v-col cols="3"><v-text-field v-model.number="extraHysteresis" type="number" label="Extra hyst." density="compact" variant="outlined" hide-details /></v-col>
+													<v-col cols="3"><v-text-field v-model.number="pwmFreqTargetHz" type="number" label="PWM Hz" density="compact" variant="outlined" hide-details /></v-col>
 												</v-row>
 											</v-expansion-panel-text>
 										</v-expansion-panel>
@@ -194,7 +196,7 @@ import { computeAutotune, type AutotuneResult, type MotorInput } from "./model/a
 import { buildConfigBlock, buildReadCommands, buildRegisterWrites, type CurrentRegisters } from "./model/apply";
 import { DRIVER_FAMILIES, familyForChip, supportedFamilies } from "./model/drivers";
 import { LS_STATE, PLUGIN_MANIFEST_ID } from "./model/constants";
-import { listDrivers, parseRegisterValue, readVin } from "./model/machine";
+import { discoverDrivers, parseRegisterValue, readRunCurrent, readVin } from "./model/machine";
 import { MOTOR_DATABASE } from "./model/motorDatabase";
 import { decodeFields } from "./model/registers";
 import {
@@ -242,13 +244,37 @@ const motorInput = computed<MotorInput | null>(() => {
 const chipItems = supportedFamilies().flatMap((f) => f.chips.map((c) => ({ title: c, value: c })));
 const chip = ref("TMC2209");
 const family = computed(() => familyForChip(chip.value) ?? DRIVER_FAMILIES.tmc22xx);
-const driverItems = computed(() => listDrivers(machineStore.model).map((d) => ({ title: d.label, value: d.id })));
+// Every physical driver across all boards (main + expansion + toolboards), with its inferred family.
+const detected = computed(() => discoverDrivers(machineStore.model));
+const driverIdItems = computed(() => detected.value.map((d) => d.id));
 const driver = ref<string>("0.0");
+const detectedHint = computed(() => {
+	const d = detected.value.find((x) => x.id === driver.value);
+	if (!d) return detected.value.length ? "Not a detected driver — check the P value." : "Connect to auto-detect drivers, or type the M569.2 P value.";
+	if (!d.tuneable) return `${d.chip ?? "External"} on ${d.board} — not tuneable via M569.2.`;
+	return `${d.chip} on ${d.board}${d.assignedTo ? ` (${d.assignedTo})` : ""}`;
+});
 const volts = ref<number>(24);
+const runCurrent = ref<number | null>(null);
 const fclk = ref<number>(DRIVER_FAMILIES.tmc22xx.fclk);
 const toff = ref<number>(3);
 const tbl = ref<number>(1);
+const extraHysteresis = ref<number>(0);
 const pwmFreqTargetHz = ref<number>(55000);
+
+// When the chip changes, snap fclk + PWM-freq target to that family's defaults.
+watch(chip, () => {
+	fclk.value = family.value.fclk;
+	pwmFreqTargetHz.value = family.value.pwmFreqTarget;
+});
+
+// Selecting a detected driver auto-fills its chip (and hence fclk/target) and run current.
+watch(driver, (id) => {
+	const d = detected.value.find((x) => x.id === id);
+	if (d?.chip) chip.value = d.chip;
+	const rc = readRunCurrent(machineStore.model, id);
+	if (rc) runCurrent.value = rc;
+});
 
 const isConnected = computed(() => machineStore.isConnected);
 
@@ -259,7 +285,9 @@ const result = computed<AutotuneResult | null>(() => {
 	try {
 		return computeAutotune(m, {
 			volts: volts.value, fclk: fclk.value,
-			toff: toff.value, tbl: tbl.value, pwmFreqTargetHz: pwmFreqTargetHz.value,
+			runCurrent: runCurrent.value ?? undefined,
+			toff: toff.value, tbl: tbl.value, extraHysteresis: extraHysteresis.value,
+			pwmFreqTargetHz: pwmFreqTargetHz.value,
 		});
 	} catch {
 		return null;
@@ -373,12 +401,12 @@ async function copyDiagnostics(): Promise<void> {
 }
 
 // ── Persistence + initial OM-derived defaults ──────────────────────────────────────────────────
-watch([vendor, motorId, chip, driver, volts, fclk, toff, tbl, pwmFreqTargetHz, custom], () => {
+watch([vendor, motorId, chip, driver, volts, fclk, toff, tbl, extraHysteresis, pwmFreqTargetHz, custom], () => {
 	try {
 		localStorage.setItem(LS_STATE, JSON.stringify({
 			vendor: vendor.value, motorId: motorId.value, chip: chip.value, driver: driver.value,
 			volts: volts.value, fclk: fclk.value, toff: toff.value, tbl: tbl.value,
-			pwmFreqTargetHz: pwmFreqTargetHz.value, custom: { ...custom },
+			extraHysteresis: extraHysteresis.value, pwmFreqTargetHz: pwmFreqTargetHz.value, custom: { ...custom },
 		}));
 	} catch { /* storage disabled */ }
 }, { deep: true });
@@ -396,6 +424,7 @@ onMounted(() => {
 			if (typeof s.fclk === "number") fclk.value = s.fclk;
 			if (typeof s.toff === "number") toff.value = s.toff;
 			if (typeof s.tbl === "number") tbl.value = s.tbl;
+			if (typeof s.extraHysteresis === "number") extraHysteresis.value = s.extraHysteresis;
 			if (typeof s.pwmFreqTargetHz === "number") pwmFreqTargetHz.value = s.pwmFreqTargetHz;
 			if (s.custom) Object.assign(custom, s.custom);
 		}
@@ -404,8 +433,14 @@ onMounted(() => {
 	// Seed supply voltage + a default driver from the live machine when available.
 	const vin = readVin(machineStore.model);
 	if (vin) volts.value = Math.round(vin);
-	const drivers = listDrivers(machineStore.model);
-	if (drivers.length && !drivers.some((d) => d.id === driver.value)) driver.value = drivers[0].id;
+	const drivers = detected.value;
+	const tuneable = drivers.filter((d) => d.tuneable);
+	if (tuneable.length && !tuneable.some((d) => d.id === driver.value)) {
+		driver.value = tuneable[0].id; // triggers the watcher → sets chip + run current
+	} else {
+		const rc = readRunCurrent(machineStore.model, driver.value);
+		if (rc) runCurrent.value = rc;
+	}
 });
 </script>
 

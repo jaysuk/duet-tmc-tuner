@@ -13,7 +13,8 @@
     "verify-build": "dwc-plugin-verify-build",
     "changelog": "node scripts/changelog.mjs",
     "release-title": "node scripts/release-title.mjs",
-    "release": "node scripts/release.mjs"
+    "release": "node scripts/release.mjs",
+    "update-motors": "node scripts/update-motors.mjs"
   },
   "dependencies": {
     "dwc-plugin-runtime": "github:jaysuk/dwc-plugin-runtime#v0.6.1"

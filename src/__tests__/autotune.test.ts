@@ -44,6 +44,37 @@ describe("computeAutotune (parity with the reference macro)", () => {
 	});
 });
 
+describe("klipper-parity refinements", () => {
+	it("uses the run current (not rated) for PWM_OFS when provided", () => {
+		const rated = computeAutotune(REF_MOTOR, REF_OPTS);
+		const run = computeAutotune(REF_MOTOR, { ...REF_OPTS, runCurrent: 0.5 });
+		expect(rated.pwmofs).toBe(102); // 374·6.5·1.0/24
+		expect(run.pwmofs).toBe(51); //   374·6.5·0.5/24
+	});
+
+	it("adds extra hysteresis on top of the computed window", () => {
+		const base = computeAutotune(REF_MOTOR, REF_OPTS); // hstrt 1, hend −2
+		const more = computeAutotune(REF_MOTOR, { ...REF_OPTS, extraHysteresis: 4 });
+		expect(base.hstrt).toBe(1);
+		expect(more.hstrt).toBe(3); // htotal = min(−1+4, 14) = 3
+		expect(more.hend).toBe(0);
+		expect(more.chopconf).toEqual({ toff: 3, tbl: 1, hstrt: 2, hend: 3 });
+	});
+
+	it("caps the hysteresis total at 14 (fields stay in range) for extreme motors", () => {
+		const extreme = computeAutotune(
+			{ resistance: 0.5, inductance: 0.0002, holdingTorque: 0.4, maxCurrent: 2, stepsPerRev: 200 },
+			REF_OPTS,
+		);
+		expect(extreme.hstrt).toBeLessThanOrEqual(8);
+		expect(extreme.hend).toBeLessThanOrEqual(12);
+		expect(extreme.chopconf.hstrt).toBeGreaterThanOrEqual(0);
+		expect(extreme.chopconf.hstrt).toBeLessThanOrEqual(7);
+		expect(extreme.chopconf.hend).toBeGreaterThanOrEqual(0);
+		expect(extreme.chopconf.hend).toBeLessThanOrEqual(15);
+	});
+});
+
 describe("selectPwmFreq", () => {
 	it("picks the highest setting at or below the target", () => {
 		expect(selectPwmFreq(12_500_000, 55_000)).toBe(2); // 48.8 kHz

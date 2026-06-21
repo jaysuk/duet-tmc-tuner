@@ -30,10 +30,18 @@ export interface AutotuneOptions {
 	volts: number;
 	/** Driver clock, Hz. */
 	fclk: number;
+	/**
+	 * Run (operating) current in amps, used for PWM_OFS and the hysteresis window. When omitted (or 0)
+	 * the motor's rated current is used. The full algorithm prefers the actual run current (M906); the
+	 * original reference macro used the rated current, which this still reproduces when none is given.
+	 */
+	runCurrent?: number;
 	/** Chopper off-time setting (CHOPCONF.TOFF), 1–15. Default 3 (the autotune default). */
 	toff?: number;
 	/** Comparator blank-time setting (CHOPCONF.TBL), 0–3. Default 1. */
 	tbl?: number;
+	/** Extra hysteresis (0–8) added on top of the computed value to reduce humming. Default 0. */
+	extraHysteresis?: number;
 	/** Target stealthChop PWM frequency, Hz (the highest chip setting at or below this is chosen). */
 	pwmFreqTargetHz?: number;
 }
@@ -95,11 +103,14 @@ export function computeAutotune(motor: MotorInput, opts: AutotuneOptions): Autot
 	const fclk = opts.fclk;
 	const toff = opts.toff ?? 3;
 	const tbl = opts.tbl ?? 1;
+	const extra = opts.extraHysteresis ?? 0;
 	const pwmFreqTargetHz = opts.pwmFreqTargetHz ?? 55_000;
+	// Operating current for PWM_OFS + hysteresis: the actual run current when known, else the rated.
+	const effI = opts.runCurrent && opts.runCurrent > 0 ? opts.runCurrent : I;
 
 	const cbemf = T / (2 * I);
 	const pwmgrad = Math.ceil((cbemf * 2 * Math.PI * fclk * 1.46) / (V * 256 * S));
-	const pwmofs = Math.ceil((374 * R * I) / V);
+	const pwmofs = Math.ceil((374 * R * effI) / V);
 	const maxpwmrps = (255 - pwmofs) / (Math.PI * pwmgrad);
 
 	// Blank time and short-delay time in seconds, from the TBL/TOFF settings.
@@ -108,11 +119,13 @@ export function computeAutotune(motor: MotorInput, opts: AutotuneOptions): Autot
 
 	// Coil current slopes during blanking and slow decay, used to size the hysteresis window.
 	const dcoilblank = (V * tblank) / L;
-	const dcoilsd = (R * I * 2 * tsd) / L;
+	const dcoilsd = (R * effI * 2 * tsd) / L;
 
-	const hstartmin = Math.ceil(Math.max(0.5 + (((dcoilblank + dcoilsd) * 2 * 248 * 32) / I) / 32 - 8, -2));
-	const hstrt = clamp(hstartmin, 1, 8);
-	const hend = Math.min(hstartmin - hstrt, 12);
+	const hstartmin = Math.ceil(Math.max(0.5 + (((dcoilblank + dcoilsd) * 2 * 248 * 32) / effI) / 32 - 8, -2));
+	// Add any extra hysteresis, then cap the total at 14 before splitting into HSTRT/HEND.
+	const htotal = Math.min(hstartmin + extra, 14);
+	const hstrt = clamp(htotal, 1, 8);
+	const hend = Math.min(htotal - hstrt, 12);
 
 	const pwm_freq = selectPwmFreq(fclk, pwmFreqTargetHz);
 

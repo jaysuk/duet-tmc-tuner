@@ -1,0 +1,38 @@
+name: Update motor database
+
+# Keeps the built-in motor database in sync with the upstream community motor list. Runs weekly (and
+# on demand); if scripts/update-motors.mjs regenerates src/model/motorDatabase.ts with any changes
+# (e.g. new motors added upstream), it opens a pull request for review rather than committing blind.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: 24 }
+
+      - name: Regenerate motor database from upstream
+        run: node scripts/update-motors.mjs
+
+      - name: Open a PR if the database changed
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/update-motor-database
+          commit-message: "chore(motors): sync motor database from upstream"
+          title: "chore: update motor database"
+          body: |
+            Automated sync of `src/model/motorDatabase.ts` from the upstream community motor list
+            (run by `.github/workflows/update-motors.yml`). Review the diff for new/changed motors,
+            then merge. CI will type-check and test the regenerated database.
+          labels: motors, automated
+          delete-branch: true
