@@ -1,0 +1,31 @@
+{
+  "name": "duet-tmc-tuner",
+  "version": "1.0.0",
+  "description": "Compute and write quiet TMC stepper-driver chopper/PWM registers directly via M569.2 — a Duet Web Control 3.7 plugin.",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/jaysuk/duet-tmc-tuner",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "dwc-plugin-typecheck",
+    "verify-build": "dwc-plugin-verify-build",
+    "changelog": "node scripts/changelog.mjs",
+    "release-title": "node scripts/release-title.mjs",
+    "release": "node scripts/release.mjs"
+  },
+  "dependencies": {
+    "dwc-plugin-runtime": "github:jaysuk/dwc-plugin-runtime#v0.6.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.4",
+    "@vitest/coverage-v8": "^4.1.8",
+    "@vue/test-utils": "^2.4.6",
+    "dwc-plugin-test-kit": "github:jaysuk/dwc-plugin-test-kit#v0.2.4",
+    "happy-dom": "^15.11.7",
+    "vitest": "^4.1.8",
+    "vue": "^3.5.30",
+    "vuetify": "^4.1.0"
+  }
+}

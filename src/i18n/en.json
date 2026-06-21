@@ -1,0 +1,16 @@
+{
+	"title": "Duet TMC Tuner",
+	"menuCaption": "TMC Tuner",
+	"updates": {
+		"title": "Duet TMC Tuner update",
+		"notifyPlugin": "Duet TMC Tuner v{version} is available. Open Plugins → TMC Tuner to update.",
+		"notifyDwc": "Duet TMC Tuner v{version} needs DuetWebControl {dwc} — update DWC first.",
+		"applyFailed": "No downloadable asset found for this release.",
+		"corsBlocked": "Couldn't fetch the update automatically — opening the download instead.",
+		"installedReload": "v{version} installed. Reload DWC to finish."
+	},
+	"diagnostics": {
+		"copied": "Diagnostics copied to clipboard.",
+		"copyFailed": "Couldn't copy — try the download instead."
+	}
+}

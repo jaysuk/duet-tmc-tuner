@@ -1,0 +1,16 @@
+{
+	"id": "DuetTmcTuner",
+	"name": "Duet TMC Tuner",
+	"author": "James Skitt",
+	"version": "1.0.0",
+	"license": "GPL-3.0-or-later",
+	"homepage": "https://github.com/jaysuk/duet-tmc-tuner",
+	"dwcVersion": "auto-major",
+	"tags": [
+		"tmc",
+		"stepper",
+		"drivers",
+		"tuning",
+		"stealthchop"
+	]
+}

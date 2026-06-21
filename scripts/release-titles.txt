@@ -1,0 +1,22 @@
+# GitHub Release titles for duet-tmc-tuner, one per line (blank lines and # comments ignored).
+# Picked by version index (semver-sorted), wrapping if it runs out. Stepper/quiet-motor puns.
+Silent Running
+Smooth Operator
+Quiet Riot
+Step Change
+Hush Now
+Chop Chop
+Stealth Mode
+Full Steam Ahead
+The Quiet Type
+Microstep in the Right Direction
+Resonance Cascade
+Damped Spirits
+Torque of the Town
+Coil Me Maybe
+Hold the Line
+Off the Hook
+Blank Slate
+Hysteresis Histrionics
+Phase Shift
+Register to Vote

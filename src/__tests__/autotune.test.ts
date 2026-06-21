@@ -1,0 +1,53 @@
+import { describe, expect, it } from "vitest";
+
+import { computeAutotune, selectPwmFreq } from "../model/autotune";
+
+// Reference motor + conditions from the validated RRF meta-gcode (R 6.5Ω, L 13mH, T 0.49Nm, I 1A,
+// 200 steps, 24 V, fCLK 12.5 MHz). The expected intermediate values are the macro's printed output.
+const REF_MOTOR = { resistance: 6.5, inductance: 0.013, holdingTorque: 0.49, maxCurrent: 1, stepsPerRev: 200 };
+const REF_OPTS = { volts: 24, fclk: 12_500_000 };
+
+describe("computeAutotune (parity with the reference macro)", () => {
+	const r = computeAutotune(REF_MOTOR, REF_OPTS);
+
+	it("matches the published intermediate values", () => {
+		expect(r.cbemf).toBeCloseTo(0.245, 6);
+		expect(r.pwmgrad).toBe(23);
+		expect(r.pwmofs).toBe(102);
+		expect(r.maxpwmrps).toBeCloseTo(2.117453, 5);
+		expect(r.tblank).toBeCloseTo(1.92e-6, 12);
+		expect(r.tsd).toBeCloseTo(8.64e-6, 12);
+		expect(r.dcoilblank).toBeCloseTo(0.003544615, 8);
+		expect(r.dcoilsd).toBeCloseTo(0.008639999, 8);
+		expect(r.hstartmin).toBe(-1);
+		expect(r.hstrt).toBe(1);
+		expect(r.hend).toBe(-2);
+	});
+
+	it("packs the stored CHOPCONF field values (hstrt−1, hend+3)", () => {
+		expect(r.chopconf).toEqual({ toff: 3, tbl: 1, hstrt: 0, hend: 1 });
+	});
+
+	it("packs the PWMCONF field values with autoscale + autograd on", () => {
+		expect(r.pwmconf.pwm_ofs).toBe(102);
+		expect(r.pwmconf.pwm_grad).toBe(23);
+		expect(r.pwmconf.pwm_autoscale).toBe(1);
+		expect(r.pwmconf.pwm_autograd).toBe(1);
+		expect(r.pwmconf.pwm_freq).toBe(2); // 12.5 MHz · 2/512 = 48.8 kHz ≤ 55 kHz target
+	});
+
+	it("clamps PWM_OFS/PWM_GRAD into the 8-bit field range", () => {
+		// A very low-resistance, high-torque motor would overflow without clamping.
+		const big = computeAutotune({ resistance: 50, inductance: 0.02, holdingTorque: 5, maxCurrent: 1, stepsPerRev: 200 }, REF_OPTS);
+		expect(big.pwmconf.pwm_ofs).toBeLessThanOrEqual(255);
+		expect(big.pwmconf.pwm_grad).toBeLessThanOrEqual(255);
+	});
+});
+
+describe("selectPwmFreq", () => {
+	it("picks the highest setting at or below the target", () => {
+		expect(selectPwmFreq(12_500_000, 55_000)).toBe(2); // 48.8 kHz
+		expect(selectPwmFreq(12_500_000, 61_000)).toBe(3); // 61.0 kHz
+		expect(selectPwmFreq(12_500_000, 30_000)).toBe(0); // only 24.4 kHz qualifies
+	});
+});
