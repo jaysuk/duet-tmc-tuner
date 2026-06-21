@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { boardFamily, discoverDrivers, listDrivers, parseRegisterValue, readRunCurrent, readVin } from "../model/machine";
+import { boardFamily, chipFromIoin, discoverDrivers, listDrivers, parseRegisterValue, readRunCurrent, readVin } from "../model/machine";
 
 describe("parseRegisterValue", () => {
 	it("parses a hex value after 'value'", () => {
@@ -69,6 +69,26 @@ describe("boardFamily", () => {
 	it("flags external-driver and Duet 2 boards as not tuneable", () => {
 		expect(boardFamily({ shortName: "MB6XD" }).tuneable).toBe(false);
 		expect(boardFamily({ name: "Duet 2 WiFi" }).tuneable).toBe(false);
+	});
+	it("treats an unknown STM32-port board as tuneable (chip read/picked later)", () => {
+		const f = boardFamily({ shortName: "kraken_h723" });
+		expect(f.tuneable).toBe(true);
+		expect(f.family).toBeNull();
+	});
+});
+
+describe("chipFromIoin", () => {
+	it("identifies UART parts from IOIN 0x06 VERSION", () => {
+		expect(chipFromIoin({ uart: 0x21000000 })).toEqual({ chip: "TMC2209", family: "tmc22xx" });
+		expect(chipFromIoin({ uart: 0x20000000 })).toEqual({ chip: "TMC2208", family: "tmc22xx" });
+	});
+	it("identifies SPI parts from IOIN 0x04 VERSION", () => {
+		expect(chipFromIoin({ spi: 0x30000000 })).toEqual({ chip: "TMC5160", family: "tmc5160" });
+		expect(chipFromIoin({ spi: 0x40000000 })).toEqual({ chip: "TMC2240", family: "tmc2240" });
+	});
+	it("returns null when neither read looks valid", () => {
+		expect(chipFromIoin({ uart: 0, spi: 0 })).toBeNull();
+		expect(chipFromIoin({})).toBeNull();
 	});
 });
 

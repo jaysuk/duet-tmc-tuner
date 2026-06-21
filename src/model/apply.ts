@@ -7,9 +7,9 @@
  * absent we start from 0, which is only safe for preview — accurate writes need a board read first so
  * the preserved bits are real. The UI enforces that.
  */
-import type { AutotuneResult } from "./autotune";
+import type { AutotuneResult, ThresholdResult } from "./autotune";
 import type { DriverFamily } from "./drivers";
-import { applyFields, toM569_2Read, toM569_2Write } from "./registers";
+import { applyFields, encodeFields, toM569_2Read, toM569_2Write } from "./registers";
 
 export interface RegisterWrite {
 	/** Register name, e.g. "CHOPCONF". */
@@ -36,12 +36,17 @@ export function buildReadCommands(family: DriverFamily, driver: string | number)
 	];
 }
 
-/** Build the CHOPCONF + PWMCONF writes (read-modify-write over `current`). */
+/**
+ * Build the register writes: CHOPCONF + PWMCONF (read-modify-write over `current`), plus the velocity
+ * thresholds TPWMTHRS/THIGH when `thresholds` is supplied (a chosen tuning mode). The threshold
+ * registers are single-value, so they're written whole.
+ */
 export function buildRegisterWrites(
 	family: DriverFamily,
 	driver: string | number,
 	result: AutotuneResult,
 	current: CurrentRegisters = {},
+	thresholds?: ThresholdResult,
 ): Array<RegisterWrite> {
 	const chop = family.registers.chopconf;
 	const pwm = family.registers.pwmconf;
@@ -49,10 +54,21 @@ export function buildRegisterWrites(
 	const chopWord = applyFields(chop, current.chopconf ?? 0, result.chopconf);
 	const pwmWord = applyFields(pwm, current.pwmconf ?? 0, result.pwmconf as unknown as Record<string, number>);
 
-	return [
+	const writes: Array<RegisterWrite> = [
 		{ register: chop.name, address: chop.address, word: chopWord, command: toM569_2Write(driver, chop, chopWord) },
 		{ register: pwm.name, address: pwm.address, word: pwmWord, command: toM569_2Write(driver, pwm, pwmWord) },
 	];
+
+	if (thresholds && thresholds.tpwmthrs !== null) {
+		const word = encodeFields(family.tpwmthrs, { value: thresholds.tpwmthrs });
+		writes.push({ register: family.tpwmthrs.name, address: family.tpwmthrs.address, word, command: toM569_2Write(driver, family.tpwmthrs, word) });
+	}
+	if (thresholds && thresholds.thigh !== null && family.thigh) {
+		const word = encodeFields(family.thigh, { value: thresholds.thigh });
+		writes.push({ register: family.thigh.name, address: family.thigh.address, word, command: toM569_2Write(driver, family.thigh, word) });
+	}
+
+	return writes;
 }
 
 /**

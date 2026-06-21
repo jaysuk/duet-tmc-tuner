@@ -28,8 +28,19 @@ export interface DriverFamily {
 	pwmFreqTarget: number;
 	/** CHOPCONF + PWMCONF (the two registers the chopper/PWM autotune writes). */
 	registers: { chopconf: RegisterDef; pwmconf: RegisterDef };
+	/** TPWMTHRS (stealthChop↔spreadCycle switch). Single 20-bit value in field `value`. */
+	tpwmthrs: RegisterDef;
+	/** THIGH (→ fullstep) — only the SPI families have it; null otherwise. */
+	thigh: RegisterDef | null;
+	/** True for chips with an SG4 threshold register (2209/2240) — affects the autoswitch point. */
+	hasSg4: boolean;
 	/** Whether the tuner can compute + write this family yet. */
 	supported: boolean;
+}
+
+/** A single-value 20-bit register (TPWMTHRS/THIGH), stored in field `value`. */
+function reg20(name: string, address: number): RegisterDef {
+	return { name, address, fields: { value: { bit: 0, width: 20 } } };
 }
 
 // ── TMC220x / 222x (UART) — CHOPCONF 0x6C, PWMCONF 0x70 ─────────────────────────────────────────
@@ -97,6 +108,9 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		fclk: 12_000_000, // internal oscillator (datasheet nominal)
 		pwmFreqTarget: 55_000,
 		registers: { chopconf: tmc22xxChopconf, pwmconf: sharedPwmconf },
+		tpwmthrs: reg20("TPWMTHRS", 0x13),
+		thigh: null, // 22xx has no THIGH register
+		hasSg4: true, // 2209 has SG4 (2208 doesn't, but the family default suits the common 2209)
 		supported: true,
 	},
 	tmc5160: {
@@ -107,6 +121,9 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		fclk: 12_000_000, // Duet drives these from a 12 MHz external clock
 		pwmFreqTarget: 20_000, // 5160s run hot at high PWM frequency
 		registers: { chopconf: tmc51xxChopconf, pwmconf: sharedPwmconf },
+		tpwmthrs: reg20("TPWMTHRS", 0x13),
+		thigh: reg20("THIGH", 0x15),
+		hasSg4: false, // 5160 uses SGT, not an SG4 threshold register
 		supported: true,
 	},
 	tmc2240: {
@@ -117,6 +134,9 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		fclk: 12_500_000, // internal oscillator
 		pwmFreqTarget: 20_000,
 		registers: { chopconf: tmc51xxChopconf, pwmconf: sharedPwmconf },
+		tpwmthrs: reg20("TPWMTHRS", 0x13),
+		thigh: reg20("THIGH", 0x15),
+		hasSg4: true,
 		supported: true,
 	},
 };

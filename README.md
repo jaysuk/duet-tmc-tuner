@@ -23,8 +23,12 @@ A Duet Web Control **3.7** plugin (Vue 3 / Vuetify 4).
   and **TMC2240**. `M569.2` register access works on Duet 3 main, expansion and tool boards (RRF
   3.3/3.4+). Boards with external drivers (6XD/1XD) and Duet 2 (TMC2660) are not tuneable this way.
 - **Drivers are auto-detected from the object model** across the mainboard, expansion boards and
-  toolboards — the plugin infers each driver's chip family from its board and reads the run current,
-  so you usually just pick the driver and the motor. You can override the chip/voltage/clock by hand.
+  toolboards (incl. CAN addresses). The board name only seeds a default chip guess; on third-party
+  STM32-port boards use **Detect chip**, which reads the driver's IOIN VERSION over `M569.2` to
+  identify it exactly. Run current is read from the assigned axis/extruder. Override anything by hand.
+- **Tuning modes** add the stealthChop↔spreadCycle velocity thresholds (TPWMTHRS, plus THIGH on the
+  SPI parts): *Chopper & PWM only* (default, no thresholds), *Silent*, *Performance*, *Auto* and
+  *Auto-switch*. These need `M569 ... D3` (stealthChop) enabled to take effect.
 - A motor datasheet (or a database match) for resistance, inductance, holding torque, rated current
   and steps/rev. The built-in database is kept in sync with the upstream community motor list by a
   scheduled workflow (`update-motors`) that opens a PR when new motors appear.

@@ -44,12 +44,16 @@
 										<v-col cols="6"><v-combobox v-model="driver" :items="driverIdItems" label="Driver (M569.2 P)" :hint="detectedHint" persistent-hint density="compact" variant="outlined" /></v-col>
 										<v-col cols="6"><v-select v-model="chip" :items="chipItems" label="Driver chip" density="compact" variant="outlined" hide-details /></v-col>
 										<v-col cols="4"><v-text-field v-model.number="volts" type="number" label="Voltage (V)" density="compact" variant="outlined" hide-details class="mt-2" /></v-col>
-										<v-col cols="4"><v-text-field v-model.number="runCurrent" type="number" label="Run current (A)" density="compact" variant="outlined" hide-details clearable placeholder="rated" class="mt-2" /></v-col>
+										<v-col cols="4"><v-text-field v-model.number="runCurrent" type="number" label="Run current (A peak)" density="compact" variant="outlined" hide-details clearable placeholder="rated" class="mt-2" /></v-col>
 										<v-col cols="4"><v-text-field v-model.number="fclk" type="number" label="Clock (Hz)" density="compact" variant="outlined" hide-details class="mt-2" /></v-col>
 									</v-row>
 									<div class="text-caption text-medium-emphasis mt-1">
 										Drivers on the mainboard, expansion and toolboards are auto-detected from the object model.
 									</div>
+									<div class="text-caption text-medium-emphasis">{{ currentNote }}</div>
+									<v-select v-model="mode" :items="modeItems" label="Tuning mode" density="compact" variant="outlined"
+											  hide-details class="mt-2"
+											  hint="Adds the stealthChop↔spreadCycle velocity thresholds (TPWMTHRS/THIGH). Needs M569 stealthChop (D3) enabled to take effect." persistent-hint />
 									<v-expansion-panels class="mt-2" variant="accordion">
 										<v-expansion-panel title="Advanced (chopper)">
 											<v-expansion-panel-text>
@@ -74,6 +78,8 @@
 								<div class="d-flex align-center flex-wrap ga-2 mb-2">
 									<div class="text-subtitle-2">Computed registers</div>
 									<v-spacer />
+									<v-btn size="small" variant="tonal" prepend-icon="mdi-chip" :disabled="!isConnected || busy"
+										   :loading="detecting" @click="detectChip">Detect chip</v-btn>
 									<v-btn size="small" variant="tonal" prepend-icon="mdi-download-network" :disabled="!isConnected || busy"
 										   :loading="reading" @click="readBack">Read current registers</v-btn>
 									<v-btn size="small" color="primary" prepend-icon="mdi-upload-network" :disabled="!isConnected || busy"
@@ -192,11 +198,11 @@ import { LogLevel, useUiStore } from "@/stores/ui";
 
 import { buildReport, copyReport, downloadReport } from "dwc-plugin-runtime";
 
-import { computeAutotune, type AutotuneResult, type MotorInput } from "./model/autotune";
+import { computeAutotune, computeThresholds, type AutotuneResult, type MotorInput, type TuningMode } from "./model/autotune";
 import { buildConfigBlock, buildReadCommands, buildRegisterWrites, type CurrentRegisters } from "./model/apply";
 import { DRIVER_FAMILIES, familyForChip, supportedFamilies } from "./model/drivers";
 import { LS_STATE, PLUGIN_MANIFEST_ID } from "./model/constants";
-import { discoverDrivers, parseRegisterValue, readRunCurrent, readVin } from "./model/machine";
+import { chipFromIoin, discoverDrivers, IOIN_ADDRESSES, parseRegisterValue, peakToRms, readRunCurrent, readVin } from "./model/machine";
 import { MOTOR_DATABASE } from "./model/motorDatabase";
 import { decodeFields } from "./model/registers";
 import {
@@ -248,6 +254,13 @@ const family = computed(() => familyForChip(chip.value) ?? DRIVER_FAMILIES.tmc22
 const detected = computed(() => discoverDrivers(machineStore.model));
 const driverIdItems = computed(() => detected.value.map((d) => d.id));
 const driver = ref<string>("0.0");
+// RRF reports peak current; the autotune uses RMS. Surface the conversion so it's never a surprise.
+const currentNote = computed(() => {
+	if (runCurrent.value && runCurrent.value > 0) {
+		return `Run current ${runCurrent.value} A peak → ${peakToRms(runCurrent.value).toFixed(2)} A RMS used for tuning (RRF is peak; clear to use the motor's rated current).`;
+	}
+	return "Using the motor's rated current. RRF/M906 current is peak — entered run current is ÷√2 to RMS for the maths.";
+});
 const detectedHint = computed(() => {
 	const d = detected.value.find((x) => x.id === driver.value);
 	if (!d) return detected.value.length ? "Not a detected driver — check the P value." : "Connect to auto-detect drivers, or type the M569.2 P value.";
@@ -261,6 +274,14 @@ const toff = ref<number>(3);
 const tbl = ref<number>(1);
 const extraHysteresis = ref<number>(0);
 const pwmFreqTargetHz = ref<number>(55000);
+const mode = ref<TuningMode>("chopperOnly");
+const modeItems = [
+	{ title: "Chopper & PWM only (no thresholds)", value: "chopperOnly" },
+	{ title: "Silent — stealthChop always", value: "silent" },
+	{ title: "Performance — spreadCycle", value: "performance" },
+	{ title: "Auto (silent for high-torque motors)", value: "auto" },
+	{ title: "Auto-switch at speed", value: "autoSwitch" },
+];
 
 // When the chip changes, snap fclk + PWM-freq target to that family's defaults.
 watch(chip, () => {
@@ -285,7 +306,8 @@ const result = computed<AutotuneResult | null>(() => {
 	try {
 		return computeAutotune(m, {
 			volts: volts.value, fclk: fclk.value,
-			runCurrent: runCurrent.value ?? undefined,
+			// runCurrent from RRF is PEAK (M906); convert to RMS for the formulas. Cleared = use rated.
+			runCurrent: runCurrent.value && runCurrent.value > 0 ? peakToRms(runCurrent.value) : undefined,
 			toff: toff.value, tbl: tbl.value, extraHysteresis: extraHysteresis.value,
 			pwmFreqTargetHz: pwmFreqTargetHz.value,
 		});
@@ -297,7 +319,17 @@ const result = computed<AutotuneResult | null>(() => {
 const currentRegs = ref<CurrentRegisters>({});
 const hasRead = computed(() => currentRegs.value.chopconf !== undefined || currentRegs.value.pwmconf !== undefined);
 
-const writes = computed(() => (result.value ? buildRegisterWrites(family.value, driver.value, result.value, currentRegs.value) : []));
+const thresholds = computed(() => {
+	const r = result.value;
+	const m = motorInput.value;
+	if (!r || !m) return undefined;
+	return computeThresholds({
+		mode: mode.value, fclk: fclk.value, stepsPerRev: m.stepsPerRev,
+		holdingTorque: m.holdingTorque, maxpwmrps: r.maxpwmrps,
+		hasSg4: family.value.hasSg4, hasThigh: !!family.value.thigh,
+	});
+});
+const writes = computed(() => (result.value ? buildRegisterWrites(family.value, driver.value, result.value, currentRegs.value, thresholds.value) : []));
 
 const configBlock = computed(() => buildConfigBlock(writes.value, {
 	driver: driver.value, chip: chip.value, motor: vendor.value === CUSTOM ? "custom motor" : motorId.value ?? undefined, volts: volts.value,
@@ -311,17 +343,46 @@ function fieldSummary(register: string): string {
 	if (!w || !result.value) return "";
 	if (register === "CHOPCONF") {
 		const f = decodeFields(family.value.registers.chopconf, w.word);
-		return `toff ${f.toff}, tbl ${f.tbl}, hstrt ${f.hstrt}, hend ${f.hend}`;
+		// Show LOGICAL hstrt/hend (the datasheet values), not the offset-encoded field values.
+		return `toff ${f.toff}, tbl ${f.tbl}, hstrt ${f.hstrt + 1}, hend ${f.hend - 3}`;
 	}
-	const f = decodeFields(family.value.registers.pwmconf, w.word);
-	return `ofs ${f.pwm_ofs}, grad ${f.pwm_grad}, freq ${f.pwm_freq}, autoscale ${f.pwm_autoscale}, autograd ${f.pwm_autograd}`;
+	if (register === "PWMCONF") {
+		const f = decodeFields(family.value.registers.pwmconf, w.word);
+		return `ofs ${f.pwm_ofs}, grad ${f.pwm_grad}, freq ${f.pwm_freq}, autoscale ${f.pwm_autoscale}, autograd ${f.pwm_autograd}`;
+	}
+	// TPWMTHRS / THIGH: a single TSTEP threshold value (0 = always stealthChop; max = effectively off).
+	return `TSTEP ${w.word >>> 0}`;
 }
 
 // ── Board interaction ─────────────────────────────────────────────────────────────────────────
 const reading = ref(false);
 const applyingRegs = ref(false);
-const busy = computed(() => reading.value || applyingRegs.value);
+const detecting = ref(false);
+const busy = computed(() => reading.value || applyingRegs.value || detecting.value);
 const copied = ref(false);
+
+// Identify the chip on the selected driver by reading its IOIN VERSION byte (the reliable way on the
+// STM32 port, where the object model doesn't carry the chip type).
+async function detectChip(): Promise<void> {
+	if (!isConnected.value) return;
+	detecting.value = true;
+	try {
+		const uartReply = await machineStore.sendCode(`M569.2 P${driver.value} R${IOIN_ADDRESSES.uart}`, false, false);
+		const spiReply = await machineStore.sendCode(`M569.2 P${driver.value} R${IOIN_ADDRESSES.spi}`, false, false);
+		const match = chipFromIoin({ uart: parseRegisterValue(uartReply), spi: parseRegisterValue(spiReply) });
+		const title = i18n.global.t("plugins.duetTmcTuner.title");
+		if (match) {
+			chip.value = match.chip;
+			uiStore.makeNotification(LogLevel.success, title, `Detected ${match.chip} on driver ${driver.value}.`);
+		} else {
+			uiStore.makeNotification(LogLevel.warning, title, `Couldn't identify the chip on driver ${driver.value} — pick it manually.`);
+		}
+	} catch (e) {
+		uiStore.makeNotification(LogLevel.error, i18n.global.t("plugins.duetTmcTuner.title"), (e as Error)?.message ?? String(e));
+	} finally {
+		detecting.value = false;
+	}
+}
 
 async function readBack(): Promise<void> {
 	if (!isConnected.value) return;
@@ -401,12 +462,12 @@ async function copyDiagnostics(): Promise<void> {
 }
 
 // ── Persistence + initial OM-derived defaults ──────────────────────────────────────────────────
-watch([vendor, motorId, chip, driver, volts, fclk, toff, tbl, extraHysteresis, pwmFreqTargetHz, custom], () => {
+watch([vendor, motorId, chip, driver, volts, fclk, toff, tbl, extraHysteresis, pwmFreqTargetHz, mode, custom], () => {
 	try {
 		localStorage.setItem(LS_STATE, JSON.stringify({
 			vendor: vendor.value, motorId: motorId.value, chip: chip.value, driver: driver.value,
 			volts: volts.value, fclk: fclk.value, toff: toff.value, tbl: tbl.value,
-			extraHysteresis: extraHysteresis.value, pwmFreqTargetHz: pwmFreqTargetHz.value, custom: { ...custom },
+			extraHysteresis: extraHysteresis.value, pwmFreqTargetHz: pwmFreqTargetHz.value, mode: mode.value, custom: { ...custom },
 		}));
 	} catch { /* storage disabled */ }
 }, { deep: true });
@@ -426,6 +487,7 @@ onMounted(() => {
 			if (typeof s.tbl === "number") tbl.value = s.tbl;
 			if (typeof s.extraHysteresis === "number") extraHysteresis.value = s.extraHysteresis;
 			if (typeof s.pwmFreqTargetHz === "number") pwmFreqTargetHz.value = s.pwmFreqTargetHz;
+			if (typeof s.mode === "string") mode.value = s.mode;
 			if (s.custom) Object.assign(custom, s.custom);
 		}
 	} catch { /* ignore */ }

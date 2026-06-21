@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { computeAutotune, selectPwmFreq } from "../model/autotune";
+import { computeAutotune, computeThresholds, selectPwmFreq, tstepFromRevsPerSec } from "../model/autotune";
 
 // Reference motor + conditions from the validated RRF meta-gcode (R 6.5Ω, L 13mH, T 0.49Nm, I 1A,
 // 200 steps, 24 V, fCLK 12.5 MHz). The expected intermediate values are the macro's printed output.
@@ -72,6 +72,39 @@ describe("klipper-parity refinements", () => {
 		expect(extreme.chopconf.hstrt).toBeLessThanOrEqual(7);
 		expect(extreme.chopconf.hend).toBeGreaterThanOrEqual(0);
 		expect(extreme.chopconf.hend).toBeLessThanOrEqual(15);
+	});
+});
+
+describe("tstepFromRevsPerSec", () => {
+	it("computes TSTEP = fclk / (256·stepsPerRev·revs)", () => {
+		expect(tstepFromRevsPerSec(12_000_000, 200, 1)).toBe(234); // 12e6 / (256·200·1) = 234.375 → 234
+	});
+	it("returns the 20-bit max for zero/negative velocity and clamps", () => {
+		expect(tstepFromRevsPerSec(12_000_000, 200, 0)).toBe(0xFFFFF);
+		expect(tstepFromRevsPerSec(12_000_000, 200, 0.00001)).toBe(0xFFFFF); // would overflow → clamped
+	});
+});
+
+describe("computeThresholds (tuning modes)", () => {
+	const base = { fclk: 12_000_000, stepsPerRev: 200, holdingTorque: 0.5, maxpwmrps: 2.1, hasSg4: true, hasThigh: false };
+	it("leaves thresholds untouched in chopperOnly mode", () => {
+		expect(computeThresholds({ ...base, mode: "chopperOnly" })).toEqual({ tpwmthrs: null, thigh: null });
+	});
+	it("silent = stealthChop always (TPWMTHRS 0); performance = spreadCycle (TPWMTHRS max)", () => {
+		expect(computeThresholds({ ...base, mode: "silent" }).tpwmthrs).toBe(0);
+		expect(computeThresholds({ ...base, mode: "performance" }).tpwmthrs).toBe(0xFFFFF);
+	});
+	it("auto picks silent for high-torque motors and performance for small ones", () => {
+		expect(computeThresholds({ ...base, mode: "auto", holdingTorque: 0.5 }).tpwmthrs).toBe(0);
+		expect(computeThresholds({ ...base, mode: "auto", holdingTorque: 0.2 }).tpwmthrs).toBe(0xFFFFF);
+	});
+	it("autoSwitch computes a TSTEP threshold and sets THIGH only when the chip has it", () => {
+		const noThigh = computeThresholds({ ...base, mode: "autoSwitch", hasThigh: false });
+		expect(noThigh.tpwmthrs).toBeGreaterThan(0);
+		expect(noThigh.tpwmthrs).toBeLessThan(0xFFFFF);
+		expect(noThigh.thigh).toBeNull();
+		const withThigh = computeThresholds({ ...base, mode: "autoSwitch", hasThigh: true });
+		expect(withThigh.thigh).not.toBeNull();
 	});
 });
 

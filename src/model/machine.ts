@@ -104,16 +104,39 @@ interface BoardFamily {
 	tuneable: boolean;
 }
 
-/** Infer the TMC driver family from a board's short name / name. */
+/**
+ * Best-effort guess of a driver's TMC family from a board's short name / name. This is only a HINT for
+ * the UI's default — the STM32 port runs on many third-party boards with arbitrary names, so an unknown
+ * board is treated as tuneable with no preselected chip (the user picks it, or it's read from the chip
+ * via {@link chipFromIoin}). Only boards we positively know carry external/unsupported drivers are
+ * flagged not-tuneable.
+ */
 export function boardFamily(board: { shortName?: string; name?: string }): BoardFamily {
 	const s = `${board.shortName ?? ""} ${board.name ?? ""}`.toUpperCase();
 	if (/6XD|1XD|EXP1XD/.test(s)) return { family: null, chip: null, tuneable: false }; // external step/dir
 	if (/DUET\s*2|MAESTRO|WIFI|ETHERNET/.test(s)) return { family: null, chip: "TMC2660", tuneable: false }; // Duet 2 — not supported in 3.7+
-	if (/MINI/.test(s)) return { family: "tmc22xx", chip: "TMC2209", tuneable: true };
-	if (/1LC|TOOL/.test(s)) return { family: "tmc22xx", chip: "TMC2209", tuneable: true };
+	if (/MINI|1LC|TOOL/.test(s)) return { family: "tmc22xx", chip: "TMC2209", tuneable: true };
 	if (/2240/.test(s)) return { family: "tmc2240", chip: "TMC2240", tuneable: true };
 	if (/6HC|3HC/.test(s)) return { family: "tmc5160", chip: "TMC5160", tuneable: true };
-	return { family: null, chip: null, tuneable: false };
+	return { family: null, chip: null, tuneable: true }; // unknown board — let the user / chip read decide
+}
+
+/** IOIN register addresses that carry the chip VERSION byte: UART parts (22xx) at 0x06, SPI at 0x04. */
+export const IOIN_ADDRESSES = { uart: 0x06, spi: 0x04 } as const;
+
+/**
+ * Identify a chip from its IOIN register VERSION byte (bits 31:24), read via M569.2. UART parts expose
+ * IOIN at 0x06 (0x20=TMC2208, 0x21=TMC2209/2226), SPI parts at 0x04 (0x30=TMC5160/2160, 0x40=TMC2240).
+ * Pass whichever reads you have; returns the matched chip + family, or null if neither looks valid.
+ */
+export function chipFromIoin(read: { uart?: number | null; spi?: number | null }): { chip: string; family: FamilyId } | null {
+	const vUart = read.uart != null ? (read.uart >>> 24) & 0xFF : -1;
+	const vSpi = read.spi != null ? (read.spi >>> 24) & 0xFF : -1;
+	if (vUart === 0x20) return { chip: "TMC2208", family: "tmc22xx" };
+	if (vUart === 0x21) return { chip: "TMC2209", family: "tmc22xx" };
+	if (vSpi === 0x30) return { chip: "TMC5160", family: "tmc5160" };
+	if (vSpi === 0x40) return { chip: "TMC2240", family: "tmc2240" };
+	return null;
 }
 
 /** Map a driver id ("b.d") to the axis/extruder it's assigned to, if any. */
@@ -162,7 +185,20 @@ export function discoverDrivers(model: unknown): Array<DiscoveredDriver> {
 	return out;
 }
 
-/** Run (operating) current in amps for a driver id, from the axis/extruder it drives. Null if unknown. */
+/**
+ * RepRapFirmware specifies motor current as PEAK (M906), whereas the TMC autotune formulas — like the
+ * Klipper plugin they come from — expect RMS current. So any current read from RRF must be scaled by
+ * 1/√2 before it goes into the maths. (Motor datasheet *rated* current in the database is a separate,
+ * fixed motor property and is used as-is, matching the upstream algorithm.)
+ */
+export const PEAK_TO_RMS = 1 / Math.SQRT2;
+
+/** Convert an RRF peak current (A) to the RMS current the autotune formulas expect. */
+export function peakToRms(peakAmps: number): number {
+	return peakAmps * PEAK_TO_RMS;
+}
+
+/** Run (operating) PEAK current in amps for a driver id (RRF convention), from the axis/extruder it drives. Null if unknown. */
 export function readRunCurrent(model: unknown, driverId: string): number | null {
 	const m = model as OmModel;
 	for (const ax of m?.move?.axes ?? []) {

@@ -73,6 +73,85 @@ function clamp(v: number, lo: number, hi: number): number {
 	return Math.max(lo, Math.min(hi, v));
 }
 
+// ── Velocity thresholds + tuning modes ──────────────────────────────────────────────────────────
+//
+// The TMC threshold registers (TPWMTHRS/THIGH) compare against TSTEP, the clocks between microsteps.
+// Klipper derives the threshold velocities in rev/s and converts with TSTEP = fclk·step_dist_256/v,
+// where step_dist_256 = rotation_distance/(stepsPerRev·256). Expressed per revolution the
+// rotation_distance cancels, leaving TSTEP = fclk / (256 · stepsPerRev · v_rev) — so we need only the
+// clock, the motor's steps/rev and the velocity in rev/s (no per-axis steps/mm or microstepping).
+
+/** Tuning goal: how stealthChop and spreadCycle are scheduled by velocity. */
+export type TuningMode =
+	| "chopperOnly" //  only CHOPCONF + PWMCONF; don't touch the velocity thresholds (default)
+	| "silent" //       stealthChop at all speeds (TPWMTHRS = 0)
+	| "performance" //  spreadCycle from very low speed (TPWMTHRS = max)
+	| "auto" //         silent for high-holding-torque (Z-like) motors, performance otherwise
+	| "autoSwitch"; //  switch stealthChop → spreadCycle at the computed PWM-saturation speed
+
+const TSTEP_MAX = 0xFFFFF; // 20-bit threshold registers
+
+/** Convert a velocity in rev/s to a TSTEP threshold value (clamped to the 20-bit register). */
+export function tstepFromRevsPerSec(fclk: number, stepsPerRev: number, revsPerSec: number): number {
+	if (revsPerSec <= 0) return TSTEP_MAX;
+	return clamp(Math.round(fclk / (256 * stepsPerRev * revsPerSec)), 0, TSTEP_MAX);
+}
+
+export interface ThresholdOptions {
+	mode: TuningMode;
+	fclk: number;
+	stepsPerRev: number;
+	holdingTorque: number;
+	/** Max stealthChop rev/s (from the autotune result). */
+	maxpwmrps: number;
+	/** True for drivers with an SG4 threshold register (2209/2240) — changes the autoswitch point. */
+	hasSg4: boolean;
+	/** Whether the chip has a THIGH register (5160/2240). */
+	hasThigh: boolean;
+}
+
+export interface ThresholdResult {
+	/** TPWMTHRS register value, or null when the mode leaves it alone (chopperOnly). */
+	tpwmthrs: number | null;
+	/** THIGH register value (fullstep switch), or null when not applicable. */
+	thigh: number | null;
+}
+
+const COOLSTEP_THRS_REVS = 0.75; // COOLSTEP_THRS_FACTOR
+const FULLSTEP_THRS_FACTOR = 1.2;
+
+/**
+ * Compute TPWMTHRS (and THIGH) for the chosen mode. `chopperOnly` returns nulls so the thresholds are
+ * left untouched (backward-compatible default). The autoswitch point mirrors the upstream algorithm.
+ */
+export function computeThresholds(opts: ThresholdOptions): ThresholdResult {
+	const { mode, fclk, stepsPerRev, holdingTorque, maxpwmrps, hasSg4, hasThigh } = opts;
+	if (mode === "chopperOnly") {
+		return { tpwmthrs: null, thigh: null };
+	}
+	const tstep = (revs: number) => tstepFromRevsPerSec(fclk, stepsPerRev, revs);
+
+	let tpwmthrs: number;
+	if (mode === "silent") {
+		tpwmthrs = 0;
+	} else if (mode === "performance") {
+		tpwmthrs = TSTEP_MAX;
+	} else if (mode === "auto") {
+		tpwmthrs = holdingTorque > 0.3 ? 0 : TSTEP_MAX; // bigger (Z-like) motors run silent
+	} else {
+		// autoSwitch: switch to spreadCycle around the PWM-saturation speed.
+		const pwmthrsRevs = hasSg4
+			? Math.max(0.2 * maxpwmrps, 1.125 * COOLSTEP_THRS_REVS)
+			: 0.5 * maxpwmrps;
+		tpwmthrs = tstep(pwmthrsRevs);
+	}
+
+	// THIGH: above this speed the driver falls back to full-step. Only the SPI chips have it; only set
+	// it when stealthChop/spreadCycle switching is in play (i.e. not the fixed silent/performance modes).
+	const thigh = hasThigh && mode === "autoSwitch" ? tstep(FULLSTEP_THRS_FACTOR * maxpwmrps) : null;
+	return { tpwmthrs, thigh };
+}
+
 /**
  * Choose the highest PWM frequency setting (0–3) whose frequency is at or below the target.
  * The divisors are the TMC220x options: 2/1024, 2/683, 2/512, 2/410 of fCLK.
