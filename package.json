@@ -1,6 +1,6 @@
 {
   "name": "duet-tmc-tuner",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Compute and write quiet TMC stepper-driver chopper/PWM registers directly via M569.2 — a Duet Web Control 3.7 plugin.",
   "private": true,
   "license": "GPL-3.0-or-later",
