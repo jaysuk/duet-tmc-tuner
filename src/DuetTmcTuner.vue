@@ -29,11 +29,15 @@
 									<template v-else>
 										<v-row dense>
 											<v-col cols="6"><v-text-field v-model.number="custom.resistance" type="number" label="Resistance (Ω)" density="compact" variant="outlined" hide-details /></v-col>
-											<v-col cols="6"><v-text-field v-model.number="custom.inductance" type="number" label="Inductance (H)" density="compact" variant="outlined" hide-details /></v-col>
-											<v-col cols="6"><v-text-field v-model.number="custom.holdingTorque" type="number" label="Holding torque (Nm)" density="compact" variant="outlined" hide-details /></v-col>
-											<v-col cols="6"><v-text-field v-model.number="custom.maxCurrent" type="number" label="Rated current (A)" density="compact" variant="outlined" hide-details /></v-col>
 											<v-col cols="6"><v-text-field v-model.number="custom.stepsPerRev" type="number" label="Steps / rev" density="compact" variant="outlined" hide-details /></v-col>
+											<v-col cols="8"><v-text-field v-model.number="custom.inductance" type="number" label="Inductance" density="compact" variant="outlined" hide-details /></v-col>
+											<v-col cols="4"><v-select v-model="customUnits.inductance" :items="inductanceUnits" label="Unit" density="compact" variant="outlined" hide-details /></v-col>
+											<v-col cols="8"><v-text-field v-model.number="custom.holdingTorque" type="number" label="Holding torque" density="compact" variant="outlined" hide-details /></v-col>
+											<v-col cols="4"><v-select v-model="customUnits.holdingTorque" :items="torqueUnits" label="Unit" density="compact" variant="outlined" hide-details /></v-col>
+											<v-col cols="8"><v-text-field v-model.number="custom.maxCurrent" type="number" label="Rated current" density="compact" variant="outlined" hide-details /></v-col>
+											<v-col cols="4"><v-select v-model="customUnits.current" :items="currentUnits" label="Unit" density="compact" variant="outlined" hide-details /></v-col>
 										</v-row>
+										<div class="text-caption text-medium-emphasis mt-1">≈ {{ customBaseSummary }}</div>
 									</template>
 								</v-col>
 
@@ -240,10 +244,34 @@ const vendors = Array.from(new Set(MOTOR_DATABASE.map((m) => m.vendor))).sort();
 const vendorItems = [...vendors.map((v) => ({ title: v, value: v })), { title: "Custom (enter specs)", value: CUSTOM }];
 const vendor = ref(vendors[0] ?? CUSTOM);
 const motorId = ref<string | null>(null);
-const custom = reactive<MotorInput>({ resistance: 1.5, inductance: 0.0015, holdingTorque: 0.4, maxCurrent: 1.5, stepsPerRev: 200 });
+// Custom motor: values are entered in the user-selected units below and converted to base (Ω, H, Nm,
+// A) for the engine — datasheets quote inductance in mH and torque in N·cm or kgf·cm, so let them pick.
+const custom = reactive({ resistance: 1.5, inductance: 1.5, holdingTorque: 40, maxCurrent: 1.5, stepsPerRev: 200 });
+const customUnits = reactive({ inductance: "mH", holdingTorque: "Ncm", current: "A" });
+const inductanceUnits = [{ title: "mH", value: "mH" }, { title: "µH", value: "uH" }, { title: "H", value: "H" }];
+const torqueUnits = [{ title: "N·cm", value: "Ncm" }, { title: "kgf·cm", value: "kgfcm" }, { title: "mN·m", value: "mNm" }, { title: "N·m", value: "Nm" }];
+const currentUnits = [{ title: "A", value: "A" }, { title: "mA", value: "mA" }];
+const IND_FACTOR: Record<string, number> = { H: 1, mH: 1e-3, uH: 1e-6 };
+const TORQUE_FACTOR: Record<string, number> = { Nm: 1, Ncm: 0.01, kgfcm: 0.0980665, mNm: 1e-3 };
+const CURRENT_FACTOR: Record<string, number> = { A: 1, mA: 1e-3 };
+
+/** Custom motor converted to base units (Ω, H, Nm, A). */
+const customBase = computed<MotorInput>(() => ({
+	resistance: custom.resistance,
+	inductance: custom.inductance * (IND_FACTOR[customUnits.inductance] ?? 1),
+	holdingTorque: custom.holdingTorque * (TORQUE_FACTOR[customUnits.holdingTorque] ?? 1),
+	maxCurrent: custom.maxCurrent * (CURRENT_FACTOR[customUnits.current] ?? 1),
+	stepsPerRev: custom.stepsPerRev,
+}));
+const customBaseSummary = computed(() => {
+	const b = customBase.value;
+	return `${b.resistance} Ω · ${(b.inductance * 1000).toFixed(3)} mH · ${b.holdingTorque.toFixed(3)} Nm · ${b.maxCurrent.toFixed(2)} A`;
+});
 
 const motorItems = computed(() =>
-	MOTOR_DATABASE.filter((m) => m.vendor === vendor.value).map((m) => ({ title: m.id, value: m.id })));
+	MOTOR_DATABASE.filter((m) => m.vendor === vendor.value)
+		.map((m) => ({ title: m.id, value: m.id }))
+		.sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: "base" })));
 
 watch(vendor, () => {
 	if (vendor.value !== CUSTOM) {
@@ -258,9 +286,9 @@ const motorHint = computed(() => {
 });
 
 const motorInput = computed<MotorInput | null>(() => {
-	const m = vendor.value === CUSTOM ? custom : selectedMotor.value;
+	const m = vendor.value === CUSTOM ? customBase.value : selectedMotor.value;
 	if (!m) return null;
-	const valid = [m.resistance, m.inductance, m.holdingTorque, m.maxCurrent, m.stepsPerRev].every((n) => typeof n === "number" && n > 0);
+	const valid = [m.resistance, m.inductance, m.holdingTorque, m.maxCurrent, m.stepsPerRev].every((n) => typeof n === "number" && Number.isFinite(n) && n > 0);
 	return valid ? { resistance: m.resistance, inductance: m.inductance, holdingTorque: m.holdingTorque, maxCurrent: m.maxCurrent, stepsPerRev: m.stepsPerRev } : null;
 });
 
@@ -509,13 +537,14 @@ async function copyDiagnostics(): Promise<void> {
 }
 
 // ── Persistence + initial OM-derived defaults ──────────────────────────────────────────────────
-watch([vendor, motorId, chip, driver, volts, fclk, toff, tbl, extraHysteresis, pwmFreqTargetHz, mode, coolStep, stallGuard, sgValue, custom], () => {
+watch([vendor, motorId, chip, driver, volts, fclk, toff, tbl, extraHysteresis, pwmFreqTargetHz, mode, coolStep, stallGuard, sgValue, custom, customUnits], () => {
 	try {
 		localStorage.setItem(LS_STATE, JSON.stringify({
 			vendor: vendor.value, motorId: motorId.value, chip: chip.value, driver: driver.value,
 			volts: volts.value, fclk: fclk.value, toff: toff.value, tbl: tbl.value,
 			extraHysteresis: extraHysteresis.value, pwmFreqTargetHz: pwmFreqTargetHz.value, mode: mode.value,
-			coolStep: coolStep.value, stallGuard: stallGuard.value, sgValue: sgValue.value, custom: { ...custom },
+			coolStep: coolStep.value, stallGuard: stallGuard.value, sgValue: sgValue.value,
+			custom: { ...custom }, customUnits: { ...customUnits },
 		}));
 	} catch { /* storage disabled */ }
 }, { deep: true });
@@ -540,6 +569,7 @@ onMounted(() => {
 			if (typeof s.stallGuard === "boolean") stallGuard.value = s.stallGuard;
 			if (typeof s.sgValue === "number") sgValue.value = s.sgValue;
 			if (s.custom) Object.assign(custom, s.custom);
+			if (s.customUnits) Object.assign(customUnits, s.customUnits);
 		}
 	} catch { /* ignore */ }
 	if (!motorId.value && vendor.value !== CUSTOM) motorId.value = motorItems.value[0]?.value ?? null;

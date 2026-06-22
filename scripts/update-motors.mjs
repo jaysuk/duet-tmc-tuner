@@ -54,6 +54,9 @@ function parse(cfg) {
 		if ([r, l, t, i].some((v) => v == null || !Number.isFinite(v))) continue;
 		motors.push({ id: e.id, vendor: e.vendor || "Other", resistance: r, inductance: l, holdingTorque: t, maxCurrent: i, stepsPerRev: Math.round(st) });
 	}
+	// Sort by manufacturer, then naturally by id (alphabetical + 0-9) within each manufacturer.
+	motors.sort((a, b) => a.vendor.localeCompare(b.vendor, undefined, { sensitivity: "base" })
+		|| a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: "base" }));
 	return motors;
 }
 
