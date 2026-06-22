@@ -7,9 +7,27 @@
  * absent we start from 0, which is only safe for preview — accurate writes need a board read first so
  * the preserved bits are real. The UI enforces that.
  */
-import type { AutotuneResult, ThresholdResult } from "./autotune";
+import { type AutotuneResult, type ThresholdResult, tstepFromRevsPerSec } from "./autotune";
 import type { DriverFamily } from "./drivers";
 import { applyFields, encodeFields, toM569_2Read, toM569_2Write } from "./registers";
+
+/** Klipper's CoolStep defaults (COOLCONF fields). */
+export const COOLSTEP_DEFAULTS = { semin: 2, semax: 4, seup: 3, sedn: 2, seimin: 1 } as const;
+
+/** Lower velocity (rev/s) above which CoolStep + StallGuard operate (→ TCOOLTHRS). */
+const COOLSTEP_THRS_REVS = 0.75;
+
+/** Optional CoolStep / StallGuard plan; when present, the matching registers are also written. */
+export interface AdvancedPlan {
+	coolStep: boolean;
+	stallGuard: boolean;
+	fclk: number;
+	stepsPerRev: number;
+	/** StallGuard threshold: SGTHRS 0–255 on 22xx, or SGT −64..63 on the SPI parts. */
+	sgValue: number;
+	/** CoolStep field overrides (defaults from COOLSTEP_DEFAULTS). */
+	coolStepFields?: Partial<typeof COOLSTEP_DEFAULTS>;
+}
 
 export interface RegisterWrite {
 	/** Register name, e.g. "CHOPCONF". */
@@ -47,6 +65,7 @@ export function buildRegisterWrites(
 	result: AutotuneResult,
 	current: CurrentRegisters = {},
 	thresholds?: ThresholdResult,
+	advanced?: AdvancedPlan,
 ): Array<RegisterWrite> {
 	const chop = family.registers.chopconf;
 	const pwm = family.registers.pwmconf;
@@ -58,14 +77,37 @@ export function buildRegisterWrites(
 		{ register: chop.name, address: chop.address, word: chopWord, command: toM569_2Write(driver, chop, chopWord) },
 		{ register: pwm.name, address: pwm.address, word: pwmWord, command: toM569_2Write(driver, pwm, pwmWord) },
 	];
+	const push = (reg: typeof chop, word: number) =>
+		writes.push({ register: reg.name, address: reg.address, word, command: toM569_2Write(driver, reg, word) });
 
 	if (thresholds && thresholds.tpwmthrs !== null) {
-		const word = encodeFields(family.tpwmthrs, { value: thresholds.tpwmthrs });
-		writes.push({ register: family.tpwmthrs.name, address: family.tpwmthrs.address, word, command: toM569_2Write(driver, family.tpwmthrs, word) });
+		push(family.tpwmthrs, encodeFields(family.tpwmthrs, { value: thresholds.tpwmthrs }));
 	}
 	if (thresholds && thresholds.thigh !== null && family.thigh) {
-		const word = encodeFields(family.thigh, { value: thresholds.thigh });
-		writes.push({ register: family.thigh.name, address: family.thigh.address, word, command: toM569_2Write(driver, family.thigh, word) });
+		push(family.thigh, encodeFields(family.thigh, { value: thresholds.thigh }));
+	}
+
+	// CoolStep + StallGuard (opt-in). TCOOLTHRS gates both; COOLCONF carries the CoolStep fields (and
+	// SGT on the SPI parts); 22xx StallGuard uses the separate SGTHRS register.
+	if (advanced && (advanced.coolStep || advanced.stallGuard)) {
+		const sg = family.stallGuard;
+		push(family.tcoolthrs, encodeFields(family.tcoolthrs, { value: tstepFromRevsPerSec(advanced.fclk, advanced.stepsPerRev, COOLSTEP_THRS_REVS) }));
+
+		const needCoolconf = advanced.coolStep || (advanced.stallGuard && sg.kind === "sgt");
+		if (needCoolconf) {
+			const f: Record<string, number> = {};
+			if (advanced.coolStep) {
+				const d = { ...COOLSTEP_DEFAULTS, ...advanced.coolStepFields };
+				Object.assign(f, { semin: d.semin, semax: d.semax, seup: d.seup, sedn: d.sedn, seimin: d.seimin });
+			}
+			if (advanced.stallGuard && sg.kind === "sgt") {
+				f.sgt = advanced.sgValue; // encodeFields handles the 7-bit signed two's-complement
+			}
+			push(family.coolconf, encodeFields(family.coolconf, f));
+		}
+		if (advanced.stallGuard && sg.kind === "sgthrs") {
+			push(sg.register, encodeFields(sg.register, { value: advanced.sgValue }));
+		}
 	}
 
 	return writes;

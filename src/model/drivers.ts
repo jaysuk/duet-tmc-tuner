@@ -34,14 +34,61 @@ export interface DriverFamily {
 	thigh: RegisterDef | null;
 	/** True for chips with an SG4 threshold register (2209/2240) — affects the autoswitch point. */
 	hasSg4: boolean;
+	/** TCOOLTHRS (lower velocity bound for CoolStep + StallGuard). Single 20-bit value in `value`. */
+	tcoolthrs: RegisterDef;
+	/** COOLCONF (CoolStep config; also carries SGT on the SPI parts). */
+	coolconf: RegisterDef;
+	/** How StallGuard's threshold is set on this family. */
+	stallGuard: StallGuardSpec;
 	/** Whether the tuner can compute + write this family yet. */
 	supported: boolean;
 }
 
-/** A single-value 20-bit register (TPWMTHRS/THIGH), stored in field `value`. */
+/** Where/how the StallGuard threshold lives: a dedicated SGTHRS register (22xx) or SGT in COOLCONF (SPI). */
+export type StallGuardSpec =
+	| { kind: "sgthrs"; register: RegisterDef; default: number; min: number; max: number }
+	| { kind: "sgt"; default: number; min: number; max: number };
+
+/** Chips in the 22xx family that lack CoolStep/StallGuard entirely (basic UART parts). */
+export const CHIPS_WITHOUT_COOLSTEP: ReadonlySet<string> = new Set(["TMC2208", "TMC2225"]);
+
+/** Whether a chip supports the CoolStep/StallGuard registers (false for plain 2208/2225). */
+export function supportsCoolStep(chip: string): boolean {
+	return !CHIPS_WITHOUT_COOLSTEP.has(chip.trim().toUpperCase());
+}
+
+/** A single-value 20-bit register (TPWMTHRS/THIGH/TCOOLTHRS), stored in field `value`. */
 function reg20(name: string, address: number): RegisterDef {
 	return { name, address, fields: { value: { bit: 0, width: 20 } } };
 }
+
+// CoolStep config. 22xx COOLCONF (0x42) carries only the CoolStep fields; the SPI parts' COOLCONF
+// (0x6D) also carries SGT (StallGuard2 threshold, 7-bit signed) and the SFILT bit.
+const coolconf22xx: RegisterDef = {
+	name: "COOLCONF",
+	address: 0x42,
+	fields: {
+		semin: { bit: 0, width: 4 },
+		seup: { bit: 5, width: 2 },
+		semax: { bit: 8, width: 4 },
+		sedn: { bit: 13, width: 2 },
+		seimin: { bit: 15, width: 1 },
+	},
+};
+const coolconf51xx: RegisterDef = {
+	name: "COOLCONF",
+	address: 0x6D,
+	fields: {
+		semin: { bit: 0, width: 4 },
+		seup: { bit: 5, width: 2 },
+		semax: { bit: 8, width: 4 },
+		sedn: { bit: 13, width: 2 },
+		seimin: { bit: 15, width: 1 },
+		sgt: { bit: 16, width: 7 }, // signed −64..63
+		sfilt: { bit: 24, width: 1 },
+	},
+};
+const sgthrsReg: RegisterDef = { name: "SGTHRS", address: 0x40, fields: { value: { bit: 0, width: 8 } } };
 
 // ── TMC220x / 222x (UART) — CHOPCONF 0x6C, PWMCONF 0x70 ─────────────────────────────────────────
 const tmc22xxChopconf: RegisterDef = {
@@ -111,6 +158,9 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		tpwmthrs: reg20("TPWMTHRS", 0x13),
 		thigh: null, // 22xx has no THIGH register
 		hasSg4: true, // 2209 has SG4 (2208 doesn't, but the family default suits the common 2209)
+		tcoolthrs: reg20("TCOOLTHRS", 0x14),
+		coolconf: coolconf22xx,
+		stallGuard: { kind: "sgthrs", register: sgthrsReg, default: 40, min: 0, max: 255 },
 		supported: true,
 	},
 	tmc5160: {
@@ -124,6 +174,9 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		tpwmthrs: reg20("TPWMTHRS", 0x13),
 		thigh: reg20("THIGH", 0x15),
 		hasSg4: false, // 5160 uses SGT, not an SG4 threshold register
+		tcoolthrs: reg20("TCOOLTHRS", 0x14),
+		coolconf: coolconf51xx,
+		stallGuard: { kind: "sgt", default: 1, min: -64, max: 63 },
 		supported: true,
 	},
 	tmc2240: {
@@ -137,6 +190,9 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		tpwmthrs: reg20("TPWMTHRS", 0x13),
 		thigh: reg20("THIGH", 0x15),
 		hasSg4: true,
+		tcoolthrs: reg20("TCOOLTHRS", 0x14),
+		coolconf: coolconf51xx,
+		stallGuard: { kind: "sgt", default: 1, min: -64, max: 63 },
 		supported: true,
 	},
 };

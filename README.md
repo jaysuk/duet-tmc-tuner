@@ -29,6 +29,10 @@ A Duet Web Control **3.7** plugin (Vue 3 / Vuetify 4).
 - **Tuning modes** add the stealthChop↔spreadCycle velocity thresholds (TPWMTHRS, plus THIGH on the
   SPI parts): *Chopper & PWM only* (default, no thresholds), *Silent*, *Performance*, *Auto* and
   *Auto-switch*. These need `M569 ... D3` (stealthChop) enabled to take effect.
+- **CoolStep & StallGuard** (opt-in, advanced): writes TCOOLTHRS + COOLCONF (CoolStep) and the
+  StallGuard threshold (SGTHRS on 2209/2226, SGT-in-COOLCONF on 5160/2240; not available on plain
+  2208/2225). These change dynamic current and sensorless-homing sensitivity — off by default, and the
+  StallGuard threshold normally needs per-machine tuning.
 - A motor datasheet (or a database match) for resistance, inductance, holding torque, rated current
   and steps/rev. The built-in database is kept in sync with the upstream community motor list by a
   scheduled workflow (`update-motors`) that opens a PR when new motors appear.

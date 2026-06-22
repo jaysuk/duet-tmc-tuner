@@ -65,6 +65,24 @@
 												</v-row>
 											</v-expansion-panel-text>
 										</v-expansion-panel>
+										<v-expansion-panel title="CoolStep & StallGuard">
+											<v-expansion-panel-text>
+												<v-alert v-if="!advancedSupported" type="info" density="compact" variant="tonal">
+													{{ chip }} has no CoolStep / StallGuard.
+												</v-alert>
+												<template v-else>
+													<div class="d-flex flex-wrap ga-x-6">
+														<v-switch v-model="coolStep" color="primary" density="compact" hide-details label="CoolStep (dynamic current)" />
+														<v-switch v-model="stallGuard" color="primary" density="compact" hide-details label="StallGuard (sensorless)" />
+													</div>
+													<v-text-field v-if="stallGuard" v-model.number="sgValue" type="number" :min="sgRange.min" :max="sgRange.max"
+														              density="compact" variant="outlined" hide-details class="mt-2" :label="sgRange.label" />
+													<v-alert v-if="coolStep || stallGuard" type="warning" density="compact" variant="tonal" class="mt-2">
+														These change dynamic current / sensorless-homing sensitivity. Test carefully — the StallGuard threshold usually needs per-machine tuning.
+													</v-alert>
+												</template>
+											</v-expansion-panel-text>
+										</v-expansion-panel>
 									</v-expansion-panels>
 								</v-col>
 							</v-row>
@@ -199,8 +217,8 @@ import { LogLevel, useUiStore } from "@/stores/ui";
 import { buildReport, copyReport, downloadReport } from "dwc-plugin-runtime";
 
 import { computeAutotune, computeThresholds, type AutotuneResult, type MotorInput, type TuningMode } from "./model/autotune";
-import { buildConfigBlock, buildReadCommands, buildRegisterWrites, type CurrentRegisters } from "./model/apply";
-import { DRIVER_FAMILIES, familyForChip, supportedFamilies } from "./model/drivers";
+import { type AdvancedPlan, buildConfigBlock, buildReadCommands, buildRegisterWrites, type CurrentRegisters } from "./model/apply";
+import { DRIVER_FAMILIES, familyForChip, supportedFamilies, supportsCoolStep } from "./model/drivers";
 import { LS_STATE, PLUGIN_MANIFEST_ID } from "./model/constants";
 import { chipFromIoin, discoverDrivers, IOIN_ADDRESSES, parseRegisterValue, peakToRms, readRunCurrent, readVin } from "./model/machine";
 import { MOTOR_DATABASE } from "./model/motorDatabase";
@@ -283,10 +301,25 @@ const modeItems = [
 	{ title: "Auto-switch at speed", value: "autoSwitch" },
 ];
 
-// When the chip changes, snap fclk + PWM-freq target to that family's defaults.
+// CoolStep + StallGuard (opt-in; off by default — they change current behaviour / sensorless homing).
+const coolStep = ref(false);
+const stallGuard = ref(false);
+const sgValue = ref<number>(DRIVER_FAMILIES.tmc22xx.stallGuard.default);
+const advancedSupported = computed(() => supportsCoolStep(chip.value));
+const sgRange = computed(() => {
+	const sg = family.value.stallGuard;
+	return { min: sg.min, max: sg.max, label: sg.kind === "sgthrs" ? "SGTHRS (0–255)" : "SGT (−64…63)" };
+});
+
+// When the chip changes, snap fclk + PWM-freq target + StallGuard default to that family's values.
 watch(chip, () => {
 	fclk.value = family.value.fclk;
 	pwmFreqTargetHz.value = family.value.pwmFreqTarget;
+	sgValue.value = family.value.stallGuard.default;
+	if (!advancedSupported.value) {
+		coolStep.value = false;
+		stallGuard.value = false;
+	}
 });
 
 // Selecting a detected driver auto-fills its chip (and hence fclk/target) and run current.
@@ -329,7 +362,13 @@ const thresholds = computed(() => {
 		hasSg4: family.value.hasSg4, hasThigh: !!family.value.thigh,
 	});
 });
-const writes = computed(() => (result.value ? buildRegisterWrites(family.value, driver.value, result.value, currentRegs.value, thresholds.value) : []));
+const advancedPlan = computed<AdvancedPlan | undefined>(() => {
+	if (!advancedSupported.value || (!coolStep.value && !stallGuard.value)) return undefined;
+	const m = motorInput.value;
+	if (!m) return undefined;
+	return { coolStep: coolStep.value, stallGuard: stallGuard.value, fclk: fclk.value, stepsPerRev: m.stepsPerRev, sgValue: sgValue.value };
+});
+const writes = computed(() => (result.value ? buildRegisterWrites(family.value, driver.value, result.value, currentRegs.value, thresholds.value, advancedPlan.value) : []));
 
 const configBlock = computed(() => buildConfigBlock(writes.value, {
 	driver: driver.value, chip: chip.value, motor: vendor.value === CUSTOM ? "custom motor" : motorId.value ?? undefined, volts: volts.value,
@@ -350,7 +389,15 @@ function fieldSummary(register: string): string {
 		const f = decodeFields(family.value.registers.pwmconf, w.word);
 		return `ofs ${f.pwm_ofs}, grad ${f.pwm_grad}, freq ${f.pwm_freq}, autoscale ${f.pwm_autoscale}, autograd ${f.pwm_autograd}`;
 	}
-	// TPWMTHRS / THIGH: a single TSTEP threshold value (0 = always stealthChop; max = effectively off).
+	if (register === "COOLCONF") {
+		const f = decodeFields(family.value.coolconf, w.word);
+		const sgt = "sgt" in f ? `, sgt ${(f.sgt << 25) >> 25}` : ""; // sign-extend 7-bit
+		return `semin ${f.semin}, semax ${f.semax}, seup ${f.seup}, sedn ${f.sedn}, seimin ${f.seimin}${sgt}`;
+	}
+	if (register === "SGTHRS") {
+		return `SGTHRS ${w.word >>> 0}`;
+	}
+	// TPWMTHRS / TCOOLTHRS / THIGH: a single TSTEP threshold value (0 = always stealthChop; max = off).
 	return `TSTEP ${w.word >>> 0}`;
 }
 
@@ -462,12 +509,13 @@ async function copyDiagnostics(): Promise<void> {
 }
 
 // ── Persistence + initial OM-derived defaults ──────────────────────────────────────────────────
-watch([vendor, motorId, chip, driver, volts, fclk, toff, tbl, extraHysteresis, pwmFreqTargetHz, mode, custom], () => {
+watch([vendor, motorId, chip, driver, volts, fclk, toff, tbl, extraHysteresis, pwmFreqTargetHz, mode, coolStep, stallGuard, sgValue, custom], () => {
 	try {
 		localStorage.setItem(LS_STATE, JSON.stringify({
 			vendor: vendor.value, motorId: motorId.value, chip: chip.value, driver: driver.value,
 			volts: volts.value, fclk: fclk.value, toff: toff.value, tbl: tbl.value,
-			extraHysteresis: extraHysteresis.value, pwmFreqTargetHz: pwmFreqTargetHz.value, mode: mode.value, custom: { ...custom },
+			extraHysteresis: extraHysteresis.value, pwmFreqTargetHz: pwmFreqTargetHz.value, mode: mode.value,
+			coolStep: coolStep.value, stallGuard: stallGuard.value, sgValue: sgValue.value, custom: { ...custom },
 		}));
 	} catch { /* storage disabled */ }
 }, { deep: true });
@@ -488,6 +536,9 @@ onMounted(() => {
 			if (typeof s.extraHysteresis === "number") extraHysteresis.value = s.extraHysteresis;
 			if (typeof s.pwmFreqTargetHz === "number") pwmFreqTargetHz.value = s.pwmFreqTargetHz;
 			if (typeof s.mode === "string") mode.value = s.mode;
+			if (typeof s.coolStep === "boolean") coolStep.value = s.coolStep;
+			if (typeof s.stallGuard === "boolean") stallGuard.value = s.stallGuard;
+			if (typeof s.sgValue === "number") sgValue.value = s.sgValue;
 			if (s.custom) Object.assign(custom, s.custom);
 		}
 	} catch { /* ignore */ }

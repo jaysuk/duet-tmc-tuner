@@ -60,4 +60,35 @@ describe("driver families", () => {
 		expect(regs22).toContain("TPWMTHRS");
 		expect(regs22).not.toContain("THIGH");
 	});
+
+	it("CoolStep/StallGuard: 22xx uses SGTHRS, SPI uses SGT in COOLCONF", () => {
+		const r = computeAutotune(TEST_MOTOR, { volts: 24, fclk: 12_000_000 });
+		// TMC2209: StallGuard via the separate SGTHRS register.
+		const w09 = buildRegisterWrites(DRIVER_FAMILIES.tmc22xx, "0.0", r, {}, undefined,
+			{ coolStep: true, stallGuard: true, fclk: 12_000_000, stepsPerRev: 200, sgValue: 40 });
+		const regs09 = w09.map((x) => x.register);
+		expect(regs09).toContain("TCOOLTHRS");
+		expect(regs09).toContain("COOLCONF");
+		expect(regs09).toContain("SGTHRS");
+		// COOLCONF on 2209 carries CoolStep fields; SGTHRS carries the threshold.
+		expect(w09.find((x) => x.register === "SGTHRS")!.word).toBe(40);
+
+		// TMC5160: StallGuard via SGT inside COOLCONF (no SGTHRS register).
+		const w5160 = buildRegisterWrites(DRIVER_FAMILIES.tmc5160, "0.0", r, {}, undefined,
+			{ coolStep: false, stallGuard: true, fclk: DRIVER_FAMILIES.tmc5160.fclk, stepsPerRev: 200, sgValue: 3 });
+		const regs5160 = w5160.map((x) => x.register);
+		expect(regs5160).toContain("COOLCONF");
+		expect(regs5160).not.toContain("SGTHRS");
+		// SGT (bits 22:16) of COOLCONF should hold 3.
+		const coolWord = w5160.find((x) => x.register === "COOLCONF")!.word;
+		expect((coolWord >> 16) & 0x7F).toBe(3);
+	});
+
+	it("encodes a negative SGT (signed) into COOLCONF two's-complement", () => {
+		const r = computeAutotune(TEST_MOTOR, { volts: 24, fclk: DRIVER_FAMILIES.tmc5160.fclk });
+		const w = buildRegisterWrites(DRIVER_FAMILIES.tmc5160, "0.0", r, {}, undefined,
+			{ coolStep: false, stallGuard: true, fclk: DRIVER_FAMILIES.tmc5160.fclk, stepsPerRev: 200, sgValue: -5 });
+		const coolWord = w.find((x) => x.register === "COOLCONF")!.word;
+		expect((coolWord >> 16) & 0x7F).toBe(0x7B); // −5 in 7-bit two's complement
+	});
 });
