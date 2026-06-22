@@ -34,6 +34,10 @@
 											  :hint="motorHint" persistent-hint class="mb-2" @update:model-value="onMotorPicked">
 										<template #append-inner><HelpTip text="Your motor. Its resistance, inductance, holding torque, rated current and steps/rev drive the calculation." /></template>
 									</v-select>
+									<div v-if="savedMotorSelected" class="d-flex ga-2 mb-2">
+										<v-btn size="x-small" variant="tonal" prepend-icon="mdi-pencil" @click="editSavedMotor">Edit saved motor</v-btn>
+										<v-btn size="x-small" variant="text" color="error" prepend-icon="mdi-delete" @click="deleteSavedMotor">Delete</v-btn>
+									</div>
 									<template v-else>
 										<v-row dense>
 											<v-col cols="6"><v-text-field v-model.number="custom.resistance" type="number" label="Resistance (Ω)" density="compact" variant="outlined" hide-details>
@@ -56,8 +60,9 @@
 											<v-col cols="4"><v-select v-model="customUnits.current" :items="currentUnits" label="Unit" density="compact" variant="outlined" hide-details /></v-col>
 										</v-row>
 										<div class="text-caption text-medium-emphasis mt-1">≈ {{ customBaseSummary }}</div>
+										<div v-if="editingMotorId" class="text-caption text-primary mt-1">Editing saved motor “{{ editingMotorId }}” — save to update it (change the name to save a copy).</div>
 										<div class="d-flex ga-2 mt-1">
-											<v-btn size="x-small" variant="tonal" prepend-icon="mdi-content-save" :disabled="!motorInput" @click="openSaveMotor">Save motor to printer</v-btn>
+											<v-btn size="x-small" variant="tonal" prepend-icon="mdi-content-save" :disabled="!motorInput" @click="openSaveMotor">{{ editingMotorId ? "Update saved motor" : "Save motor to printer" }}</v-btn>
 											<v-btn size="x-small" variant="text" prepend-icon="mdi-share-variant" :disabled="!motorInput" @click="copyMotorForSharing">Copy to share</v-btn>
 										</div>
 									</template>
@@ -655,22 +660,65 @@ function rememberCurrent(): void {
 function onMotorPicked(): void { rememberCurrent(); }
 function onChipPicked(): void { rememberCurrent(); }
 // Vendor change auto-selects the first motor asynchronously; remember after that settles.
-function onVendorPicked(): void { void nextTick(rememberCurrent); }
+function onVendorPicked(): void { editingMotorId.value = null; void nextTick(rememberCurrent); }
 
 const saveMotorDialog = ref(false);
 const saveMotorName = ref("");
+/** Set while editing an existing saved motor (its original id) so a rename can replace the old entry. */
+const editingMotorId = ref<string | null>(null);
+
+/** Is a saved (on-printer) motor currently selected? */
+const savedMotorSelected = computed(() => vendor.value === SAVED && !!selectedMotor.value);
+
 function openSaveMotor(): void {
-	saveMotorName.value = "";
+	saveMotorName.value = editingMotorId.value ?? "";
 	saveMotorDialog.value = true;
 }
+
+/** Load the selected saved motor into the custom editor for editing (values shown in mH / N·cm / A). */
+function editSavedMotor(): void {
+	const m = selectedMotor.value;
+	if (!m) return;
+	editingMotorId.value = m.id;
+	customUnits.inductance = "mH";
+	customUnits.holdingTorque = "Ncm";
+	customUnits.current = "A";
+	custom.resistance = m.resistance;
+	custom.inductance = m.inductance / IND_FACTOR.mH; // H → mH
+	custom.holdingTorque = m.holdingTorque / TORQUE_FACTOR.Ncm; // Nm → N·cm
+	custom.maxCurrent = m.maxCurrent / CURRENT_FACTOR.A;
+	custom.stepsPerRev = m.stepsPerRev;
+	vendor.value = CUSTOM; // show the editor
+}
+
+async function deleteSavedMotor(): Promise<void> {
+	const m = selectedMotor.value;
+	if (!m || vendor.value !== SAVED) return;
+	store.value.customMotors = store.value.customMotors.filter((x) => x.id !== m.id);
+	if (editingMotorId.value === m.id) editingMotorId.value = null;
+	writeLocalStore();
+	// Move the selection somewhere sane.
+	vendor.value = store.value.customMotors.length ? SAVED : (vendors[0] ?? CUSTOM);
+	motorId.value = motorItems.value[0]?.value ?? null;
+	const title = i18n.global.t("plugins.duetTmcTuner.title");
+	const ok = await saveStore(store.value);
+	uiStore.makeNotification(ok ? LogLevel.success : LogLevel.warning, title,
+		ok ? `Deleted "${m.id}" from the printer.` : `Deleted "${m.id}" locally, but couldn't update the printer (not connected?).`);
+}
+
 async function confirmSaveMotor(): Promise<void> {
 	const name = saveMotorName.value.trim();
 	const b = customBase.value;
 	if (!name || !motorInput.value) return;
 	const spec: MotorSpec = { id: name, vendor: "Saved", resistance: b.resistance, inductance: b.inductance, holdingTorque: b.holdingTorque, maxCurrent: b.maxCurrent, stepsPerRev: b.stepsPerRev };
+	// Renaming an edited motor: drop the old entry.
+	if (editingMotorId.value && editingMotorId.value !== name) {
+		store.value.customMotors = store.value.customMotors.filter((m) => m.id !== editingMotorId.value);
+	}
 	const existing = store.value.customMotors.findIndex((m) => m.id === name);
 	if (existing >= 0) store.value.customMotors.splice(existing, 1, spec);
 	else store.value.customMotors.push(spec);
+	editingMotorId.value = null;
 	writeLocalStore(); // keep it locally immediately (survives a plugin update in this browser)
 	saveMotorDialog.value = false;
 	vendor.value = SAVED;
