@@ -40,6 +40,11 @@ export interface AutotuneOptions {
 	toff?: number;
 	/** Comparator blank-time setting (CHOPCONF.TBL), 0–3. Default 1. */
 	tbl?: number;
+	/**
+	 * Blank-time in tCLK cycles for TBL 0–3 (family-specific: 22xx = 16/24/32/40, 5160/2240 = 16/24/36/54).
+	 * Defaults to the 5160/2240 mapping via the 16·1.5^TBL formula when omitted.
+	 */
+	blankCycles?: readonly number[];
 	/** Extra hysteresis (0–8) added on top of the computed value to reduce humming. Default 0. */
 	extraHysteresis?: number;
 	/** Target stealthChop PWM frequency, Hz (the highest chip setting at or below this is chosen). */
@@ -192,8 +197,10 @@ export function computeAutotune(motor: MotorInput, opts: AutotuneOptions): Autot
 	const pwmofs = Math.ceil((374 * R * effI) / V);
 	const maxpwmrps = (255 - pwmofs) / (Math.PI * pwmgrad);
 
-	// Blank time and short-delay time in seconds, from the TBL/TOFF settings.
-	const tblank = (16 * Math.pow(1.5, tbl)) / fclk;
+	// Blank time and short-delay time in seconds, from the TBL/TOFF settings. The blank-time-in-cycles
+	// is family-specific (Trinamic calc sheets); fall back to the 16·1.5^TBL form (5160/2240) if not given.
+	const tblankCycles = opts.blankCycles?.[Math.max(0, Math.min(3, Math.round(tbl)))] ?? 16 * Math.pow(1.5, tbl);
+	const tblank = tblankCycles / fclk;
 	const tsd = (12 + 32 * toff) / fclk;
 
 	// Coil current slopes during blanking and slow decay, used to size the hysteresis window.

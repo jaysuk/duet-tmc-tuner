@@ -399,6 +399,7 @@ const result = computed<AutotuneResult | null>(() => {
 			// runCurrent from RRF is PEAK (M906); convert to RMS for the formulas. Cleared = use rated.
 			runCurrent: runCurrent.value && runCurrent.value > 0 ? peakToRms(runCurrent.value) : undefined,
 			toff: toff.value, tbl: tbl.value, extraHysteresis: extraHysteresis.value,
+			blankCycles: family.value.blankCycles,
 			pwmFreqTargetHz: pwmFreqTargetHz.value,
 		});
 	} catch {

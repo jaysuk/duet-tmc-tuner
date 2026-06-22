@@ -26,6 +26,11 @@ export interface DriverFamily {
 	fclk: number;
 	/** Default stealthChop PWM frequency target (Hz). 22xx run quiet at 55 kHz; 5160/2240 at 20 kHz. */
 	pwmFreqTarget: number;
+	/**
+	 * Comparator blank time in tCLK cycles for TBL = 0,1,2,3. This differs by family (per Trinamic's
+	 * calculation sheets): 220x/222x = 16/24/32/40; 2160/5160/2240/5240 = 16/24/36/54.
+	 */
+	blankCycles: readonly [number, number, number, number];
 	/** CHOPCONF + PWMCONF (the two registers the chopper/PWM autotune writes). */
 	registers: { chopconf: RegisterDef; pwmconf: RegisterDef };
 	/** TPWMTHRS (stealthChop↔spreadCycle switch). Single 20-bit value in field `value`. */
@@ -154,6 +159,7 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		defaultChip: "TMC2209",
 		fclk: 12_000_000, // internal oscillator (datasheet nominal)
 		pwmFreqTarget: 55_000,
+		blankCycles: [16, 24, 32, 40],
 		registers: { chopconf: tmc22xxChopconf, pwmconf: sharedPwmconf },
 		tpwmthrs: reg20("TPWMTHRS", 0x13),
 		thigh: null, // 22xx has no THIGH register
@@ -170,6 +176,7 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		defaultChip: "TMC5160",
 		fclk: 12_000_000, // Duet drives these from a 12 MHz external clock
 		pwmFreqTarget: 20_000, // 5160s run hot at high PWM frequency
+		blankCycles: [16, 24, 36, 54],
 		registers: { chopconf: tmc51xxChopconf, pwmconf: sharedPwmconf },
 		tpwmthrs: reg20("TPWMTHRS", 0x13),
 		thigh: reg20("THIGH", 0x15),
@@ -186,6 +193,7 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		defaultChip: "TMC2240",
 		fclk: 12_500_000, // internal oscillator
 		pwmFreqTarget: 20_000,
+		blankCycles: [16, 24, 36, 54],
 		registers: { chopconf: tmc51xxChopconf, pwmconf: sharedPwmconf },
 		tpwmthrs: reg20("TPWMTHRS", 0x13),
 		thigh: reg20("THIGH", 0x15),

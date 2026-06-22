@@ -44,6 +44,28 @@ describe("computeAutotune (parity with the reference macro)", () => {
 	});
 });
 
+describe("family-specific blank time (Trinamic calc sheets)", () => {
+	const m = { resistance: 4.5, inductance: 0.0075, holdingTorque: 0.4, maxCurrent: 2, stepsPerRev: 200 };
+	it("22xx uses 16/24/32/40 tCLK for TBL 0–3", () => {
+		const cyc = [16, 24, 32, 40];
+		for (let tbl = 0; tbl <= 3; tbl++) {
+			const r = computeAutotune(m, { volts: 24, fclk: 12_500_000, tbl, blankCycles: [16, 24, 32, 40] });
+			expect(r.tblank).toBeCloseTo(cyc[tbl] / 12_500_000, 12);
+		}
+	});
+	it("5160/2240 use 16/24/36/54 tCLK for TBL 0–3", () => {
+		const cyc = [16, 24, 36, 54];
+		for (let tbl = 0; tbl <= 3; tbl++) {
+			const r = computeAutotune(m, { volts: 24, fclk: 12_500_000, tbl, blankCycles: [16, 24, 36, 54] });
+			expect(r.tblank).toBeCloseTo(cyc[tbl] / 12_500_000, 12);
+		}
+	});
+	it("falls back to 16·1.5^TBL when no table is given (default = reference macro)", () => {
+		const r = computeAutotune(m, { volts: 24, fclk: 12_500_000, tbl: 1 });
+		expect(r.tblank).toBeCloseTo(24 / 12_500_000, 12);
+	});
+});
+
 describe("klipper-parity refinements", () => {
 	it("uses the run current (not rated) for PWM_OFS when provided", () => {
 		const rated = computeAutotune(REF_MOTOR, REF_OPTS);
