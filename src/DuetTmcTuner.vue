@@ -38,7 +38,7 @@
 										<v-btn size="x-small" variant="tonal" prepend-icon="mdi-pencil" @click="editSavedMotor">Edit saved motor</v-btn>
 										<v-btn size="x-small" variant="text" color="error" prepend-icon="mdi-delete" @click="deleteSavedMotor">Delete</v-btn>
 									</div>
-									<template v-else>
+									<template v-if="vendor === CUSTOM">
 										<v-row dense>
 											<v-col cols="6"><v-text-field v-model.number="custom.resistance" type="number" label="Resistance (Ω)" density="compact" variant="outlined" hide-details>
 												<template #append-inner><HelpTip text="Motor phase (coil) resistance in ohms, from its datasheet." /></template>
