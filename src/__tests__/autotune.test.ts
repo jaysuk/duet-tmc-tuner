@@ -66,6 +66,28 @@ describe("family-specific blank time (Trinamic calc sheets)", () => {
 	});
 });
 
+describe("hysteresis basis (Trinamic peak vs Klipper RMS)", () => {
+	const m = { resistance: 4.5, inductance: 0.0075, holdingTorque: 0.49, maxCurrent: 2, stepsPerRev: 200 };
+	const base = { volts: 24, fclk: 12_500_000 };
+	it("produces valid in-range fields on the peak basis", () => {
+		const r = computeAutotune(m, { ...base, hysteresisBasis: "peak", currentScaleCs: 31 });
+		expect(r.chopconf.hstrt).toBeGreaterThanOrEqual(0);
+		expect(r.chopconf.hstrt).toBeLessThanOrEqual(7);
+		expect(r.chopconf.hend).toBeGreaterThanOrEqual(0);
+		expect(r.chopconf.hend).toBeLessThanOrEqual(15);
+	});
+	it("a lower current scale (CS) reduces the hysteresis window", () => {
+		const full = computeAutotune(m, { ...base, hysteresisBasis: "peak", currentScaleCs: 31 });
+		const low = computeAutotune(m, { ...base, hysteresisBasis: "peak", currentScaleCs: 8 });
+		expect(low.hstartmin).toBeLessThanOrEqual(full.hstartmin);
+	});
+	it("rms basis is unchanged by the CS field", () => {
+		const a = computeAutotune(m, { ...base, hysteresisBasis: "rms", currentScaleCs: 31 });
+		const b = computeAutotune(m, { ...base, hysteresisBasis: "rms", currentScaleCs: 8 });
+		expect(a.hstartmin).toBe(b.hstartmin);
+	});
+});
+
 describe("klipper-parity refinements", () => {
 	it("uses the run current (not rated) for PWM_OFS when provided", () => {
 		const rated = computeAutotune(REF_MOTOR, REF_OPTS);

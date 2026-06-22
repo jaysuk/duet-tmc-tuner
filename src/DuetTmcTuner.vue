@@ -16,6 +16,10 @@
 								writes them <strong>directly to the driver registers</strong> with <code>M569.2</code>. Read the
 								live registers first so only the tuned fields change (your microstep/current bits are kept).
 							</v-alert>
+							<div class="d-flex justify-end mb-2">
+								<v-btn size="small" variant="text" prepend-icon="mdi-backup-restore" @click="resetToDefault"
+									title="Reset settings to defaults (saved motors and per-driver assignments are kept)">Reset to defaults</v-btn>
+							</div>
 
 							<v-row>
 								<!-- Motor -->
@@ -52,6 +56,10 @@
 											<v-col cols="4"><v-select v-model="customUnits.current" :items="currentUnits" label="Unit" density="compact" variant="outlined" hide-details /></v-col>
 										</v-row>
 										<div class="text-caption text-medium-emphasis mt-1">≈ {{ customBaseSummary }}</div>
+										<div class="d-flex ga-2 mt-1">
+											<v-btn size="x-small" variant="tonal" prepend-icon="mdi-content-save" :disabled="!motorInput" @click="openSaveMotor">Save motor to printer</v-btn>
+											<v-btn size="x-small" variant="text" prepend-icon="mdi-share-variant" :disabled="!motorInput" @click="copyMotorForSharing">Copy to share</v-btn>
+										</div>
 									</template>
 								</v-col>
 
@@ -82,6 +90,10 @@
 													<v-col cols="3"><v-text-field v-model.number="tbl" type="number" label="TBL (0–3)" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="Comparator blank time (CHOPCONF TBL), 0–3. The autotune default is 1." :href="DOC.tuning" /></template></v-text-field></v-col>
 													<v-col cols="3"><v-text-field v-model.number="extraHysteresis" type="number" label="Extra hyst." density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="Extra chopper hysteresis (0–8) added on top of the computed value to reduce audible motor hum." :href="DOC.tuning" /></template></v-text-field></v-col>
 													<v-col cols="3"><v-text-field v-model.number="pwmFreqTargetHz" type="number" label="PWM Hz" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="Target stealthChop PWM frequency. The highest chip setting at or below this is used (55 kHz for 22xx, 20 kHz for 5160/2240)." :href="DOC.tuning" /></template></v-text-field></v-col>
+												</v-row>
+												<v-row dense class="mt-2">
+													<v-col cols="7"><v-select v-model="hysteresisBasis" :items="hysteresisBasisItems" label="Hysteresis basis" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="RMS = Klipper/validated default. Peak = Trinamic calculation-sheet exact (uses the peak coil current and the CS+1 current-scale factor)." :href="DOC.tuning" /></template></v-select></v-col>
+													<v-col v-if="hysteresisBasis === 'peak'" cols="5"><v-text-field v-model.number="currentScaleCs" type="number" :min="0" :max="31" label="Current scale CS (0–31)" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="TMC current-scale (CS) the driver runs at; 31 = full scale. Only used by the Trinamic (peak) hysteresis basis." :href="DOC.tuning" /></template></v-text-field></v-col>
 												</v-row>
 											</v-expansion-panel-text>
 										</v-expansion-panel>
@@ -120,13 +132,14 @@
 										   :loading="detecting" @click="detectChip">Detect chip</v-btn>
 									<v-btn size="small" variant="tonal" prepend-icon="mdi-download-network" :disabled="!isConnected || busy"
 										   :loading="reading" @click="readBack">Read current registers</v-btn>
-									<v-btn size="small" color="primary" prepend-icon="mdi-upload-network" :disabled="!isConnected || busy"
+									<v-btn size="small" color="primary" prepend-icon="mdi-upload-network" :disabled="!isConnected || busy || !hasRead"
 										   :loading="applyingRegs" @click="applyNow">Apply now</v-btn>
 								</div>
 
 								<v-alert v-if="!hasRead" type="info" density="compact" variant="tonal" class="mb-3">
-									No live read yet — the words below assume all other bits are 0. Click
-									<strong>Read current registers</strong> (connected) for an accurate read-modify-write.
+									Registers not read yet — <strong>Apply now</strong> is disabled until the live values are read
+									(it's automatic when you pick a driver while connected, or use <strong>Read current registers</strong>),
+									so the read-modify-write keeps your microstep/current bits.
 								</v-alert>
 
 								<v-table density="compact" class="reg-table mb-3">
@@ -167,6 +180,21 @@
 								</div>
 								<pre class="config-block">{{ configBlock }}</pre>
 								<v-snackbar v-model="copied" :timeout="2000" color="success" location="top">Copied</v-snackbar>
+								<v-dialog v-model="saveMotorDialog" max-width="420">
+									<v-card>
+										<v-card-title>Save motor to printer</v-card-title>
+										<v-card-text>
+											<v-text-field v-model="saveMotorName" label="Motor name" density="compact" variant="outlined" autofocus
+														  hint="Stored on the SD card — survives plugin updates. Reuse a name to overwrite." persistent-hint @keyup.enter="confirmSaveMotor" />
+											<div class="text-caption text-medium-emphasis mt-2">≈ {{ customBaseSummary }}</div>
+										</v-card-text>
+										<v-card-actions>
+											<v-spacer />
+											<v-btn variant="text" @click="saveMotorDialog = false">Cancel</v-btn>
+											<v-btn color="primary" :disabled="!saveMotorName.trim()" @click="confirmSaveMotor">Save</v-btn>
+										</v-card-actions>
+									</v-card>
+								</v-dialog>
 							</template>
 						</v-card-text>
 					</v-tabs-window-item>
@@ -242,7 +270,8 @@ import { type AdvancedPlan, buildConfigBlock, buildReadCommands, buildRegisterWr
 import { DRIVER_FAMILIES, familyForChip, supportedFamilies, supportsCoolStep } from "./model/drivers";
 import { LS_STATE, PLUGIN_MANIFEST_ID } from "./model/constants";
 import { chipFromIoin, discoverDrivers, IOIN_ADDRESSES, parseRegisterValue, peakToRms, readRunCurrent, readVin } from "./model/machine";
-import { MOTOR_DATABASE } from "./model/motorDatabase";
+import { MOTOR_DATABASE, type MotorSpec } from "./model/motorDatabase";
+import { emptyStore, loadStore, saveStore, type TunerStore } from "./model/storage";
 import { decodeFields } from "./model/registers";
 import {
 	applying, applyUpdateNow, checking, dismissCurrentUpdate, pendingReload,
@@ -263,9 +292,18 @@ const DOC = {
 };
 const motorCount = MOTOR_DATABASE.length;
 
+// ── Persistent store kept on the printer (custom motors + per-driver assignments) ──────────────
+const SAVED = "__saved__";
+const store = ref<TunerStore>(emptyStore());
+let restoring = false; // suppresses assignment auto-save while we restore a driver's saved selection
+
 // ── Motor selection ────────────────────────────────────────────────────────────────────────────
 const vendors = Array.from(new Set(MOTOR_DATABASE.map((m) => m.vendor))).sort();
-const vendorItems = [...vendors.map((v) => ({ title: v, value: v })), { title: "Custom (enter specs)", value: CUSTOM }];
+const vendorItems = computed(() => [
+	...(store.value.customMotors.length ? [{ title: "★ Saved (on printer)", value: SAVED }] : []),
+	...vendors.map((v) => ({ title: v, value: v })),
+	{ title: "Custom (enter specs)", value: CUSTOM },
+]);
 const vendor = ref(vendors[0] ?? CUSTOM);
 const motorId = ref<string | null>(null);
 // Custom motor: values are entered in the user-selected units below and converted to base (Ω, H, Nm,
@@ -292,18 +330,30 @@ const customBaseSummary = computed(() => {
 	return `${b.resistance} Ω · ${(b.inductance * 1000).toFixed(3)} mH · ${b.holdingTorque.toFixed(3)} Nm · ${b.maxCurrent.toFixed(2)} A`;
 });
 
-const motorItems = computed(() =>
-	MOTOR_DATABASE.filter((m) => m.vendor === vendor.value)
-		.map((m) => ({ title: m.id, value: m.id }))
-		.sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: "base" })));
+const motorItems = computed(() => {
+	const list = vendor.value === SAVED
+		? store.value.customMotors.map((m) => ({ title: m.id, value: m.id }))
+		: MOTOR_DATABASE.filter((m) => m.vendor === vendor.value).map((m) => ({ title: m.id, value: m.id }));
+	return list.sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: "base" }));
+});
 
 watch(vendor, () => {
-	if (vendor.value !== CUSTOM) {
+	// Keep the current motor if it belongs to the new vendor (so restoring a saved selection isn't
+	// clobbered); otherwise default to the first.
+	if (vendor.value !== CUSTOM && !motorItems.value.some((x) => x.value === motorId.value)) {
 		motorId.value = motorItems.value[0]?.value ?? null;
 	}
 });
 
-const selectedMotor = computed(() => MOTOR_DATABASE.find((m) => m.id === motorId.value) ?? null);
+/** Select a motor by id across the database and the saved (on-printer) motors, setting its vendor. */
+function selectMotorById(id: string): void {
+	const dbm = MOTOR_DATABASE.find((m) => m.id === id);
+	if (dbm) { vendor.value = dbm.vendor; motorId.value = id; return; }
+	if (store.value.customMotors.some((m) => m.id === id)) { vendor.value = SAVED; motorId.value = id; }
+}
+
+const selectedMotor = computed(() =>
+	MOTOR_DATABASE.find((m) => m.id === motorId.value) ?? store.value.customMotors.find((m) => m.id === motorId.value) ?? null);
 const motorHint = computed(() => {
 	const m = selectedMotor.value;
 	return m ? `${m.resistance} Ω · ${(m.inductance * 1000).toFixed(2)} mH · ${m.holdingTorque} Nm · ${m.maxCurrent} A · ${m.stepsPerRev} steps` : "";
@@ -349,6 +399,13 @@ const toff = ref<number>(3);
 const tbl = ref<number>(1);
 const extraHysteresis = ref<number>(0);
 const pwmFreqTargetHz = ref<number>(55000);
+// Hysteresis maths basis: "rms" (Klipper/validated default) or "peak" (Trinamic calc-sheet exact).
+const hysteresisBasis = ref<"rms" | "peak">("rms");
+const currentScaleCs = ref<number>(31);
+const hysteresisBasisItems = [
+	{ title: "RMS current (Klipper, default)", value: "rms" },
+	{ title: "Peak current (Trinamic exact)", value: "peak" },
+];
 const mode = ref<TuningMode>("chopperOnly");
 const modeItems = [
 	{ title: "Chopper & PWM only (no thresholds)", value: "chopperOnly" },
@@ -379,12 +436,29 @@ watch(chip, () => {
 	}
 });
 
-// Selecting a detected driver auto-fills its chip (and hence fclk/target) and run current.
-watch(driver, (id) => {
+const initialized = ref(false);
+
+/** Apply a driver's context: restore its saved/board chip + motor, read its run current, auto-detect. */
+function applyDriverContext(id: string): void {
+	const a = store.value.assignments[id];
 	const d = detected.value.find((x) => x.id === id);
-	if (d?.chip) chip.value = d.chip;
+	restoring = true;
+	try {
+		// Prefer a remembered (saved-on-printer) assignment, else the board-inferred chip.
+		if (a?.chip) chip.value = a.chip;
+		else if (d?.chip) chip.value = d.chip;
+		if (a?.motorId) selectMotorById(a.motorId);
+	} finally {
+		restoring = false;
+	}
 	const rc = readRunCurrent(machineStore.model, id);
 	if (rc) runCurrent.value = rc;
+	void autoReadDriver(); // identify chip + read live registers as soon as a driver is chosen
+}
+
+// React to a USER changing the driver (init handles the first apply explicitly, in order).
+watch(driver, (id) => {
+	if (initialized.value) applyDriverContext(id);
 });
 
 const isConnected = computed(() => machineStore.isConnected);
@@ -400,6 +474,7 @@ const result = computed<AutotuneResult | null>(() => {
 			runCurrent: runCurrent.value && runCurrent.value > 0 ? peakToRms(runCurrent.value) : undefined,
 			toff: toff.value, tbl: tbl.value, extraHysteresis: extraHysteresis.value,
 			blankCycles: family.value.blankCycles,
+			hysteresisBasis: hysteresisBasis.value, currentScaleCs: currentScaleCs.value,
 			pwmFreqTargetHz: pwmFreqTargetHz.value,
 		});
 	} catch {
@@ -539,6 +614,76 @@ async function applyNow(): Promise<void> {
 	}
 }
 
+// Auto-identify the chip and read the live registers when a driver is chosen (best-effort).
+let autoReadToken = 0;
+async function autoReadDriver(): Promise<void> {
+	if (!isConnected.value || busy.value) return;
+	const token = ++autoReadToken;
+	await detectChip();
+	if (token !== autoReadToken) return; // a newer driver selection superseded this one
+	await readBack();
+}
+
+// ── Persistence to the printer: remember the motor/chip per driver, and saved custom motors ──────
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+function persistStore(): void {
+	if (saveTimer) clearTimeout(saveTimer);
+	saveTimer = setTimeout(() => { void saveStore(store.value); }, 500);
+}
+// Remember the selected motor + chip against the current driver (skipped while restoring).
+watch([motorId, chip, vendor], () => {
+	if (!initialized.value || restoring || !driver.value) return;
+	store.value.assignments[driver.value] = {
+		motorId: vendor.value === CUSTOM ? undefined : motorId.value ?? undefined,
+		chip: chip.value,
+	};
+	persistStore();
+});
+
+const saveMotorDialog = ref(false);
+const saveMotorName = ref("");
+function openSaveMotor(): void {
+	saveMotorName.value = "";
+	saveMotorDialog.value = true;
+}
+function confirmSaveMotor(): void {
+	const name = saveMotorName.value.trim();
+	const b = customBase.value;
+	if (!name || !motorInput.value) return;
+	const spec: MotorSpec = { id: name, vendor: "Saved", resistance: b.resistance, inductance: b.inductance, holdingTorque: b.holdingTorque, maxCurrent: b.maxCurrent, stepsPerRev: b.stepsPerRev };
+	const existing = store.value.customMotors.findIndex((m) => m.id === name);
+	if (existing >= 0) store.value.customMotors.splice(existing, 1, spec);
+	else store.value.customMotors.push(spec);
+	persistStore();
+	saveMotorDialog.value = false;
+	vendor.value = SAVED;
+	motorId.value = name;
+	uiStore.makeNotification(LogLevel.success, i18n.global.t("plugins.duetTmcTuner.title"), `Saved "${name}" to the printer.`);
+}
+/** Klipper-style cfg entry, for contributing a motor to the shared database via PR. */
+function copyMotorForSharing(): void {
+	const b = customBase.value;
+	const name = (motorId.value || saveMotorName.value || "my-motor").trim();
+	const cfg = `[motor_constants ${name}]\nresistance: ${b.resistance}\ninductance: ${b.inductance}\nholding_torque: ${b.holdingTorque}\nmax_current: ${b.maxCurrent}\nsteps_per_revolution: ${b.stepsPerRev}`;
+	if (navigator.clipboard) void navigator.clipboard.writeText(cfg).then(() => { copied.value = true; });
+}
+
+function resetToDefault(): void {
+	vendor.value = vendors[0] ?? CUSTOM;
+	motorId.value = motorItems.value[0]?.value ?? null;
+	chip.value = "TMC2209";
+	volts.value = Math.round(readVin(machineStore.model) ?? 24);
+	runCurrent.value = null;
+	fclk.value = family.value.fclk;
+	toff.value = 3; tbl.value = 1; extraHysteresis.value = 0; pwmFreqTargetHz.value = family.value.pwmFreqTarget;
+	mode.value = "chopperOnly";
+	hysteresisBasis.value = "rms"; currentScaleCs.value = 31;
+	coolStep.value = false; stallGuard.value = false; sgValue.value = family.value.stallGuard.default;
+	currentRegs.value = {};
+	try { localStorage.removeItem(LS_STATE); } catch { /* ignore */ }
+	uiStore.makeNotification(LogLevel.info, i18n.global.t("plugins.duetTmcTuner.title"), "Reset to defaults (saved motors & assignments kept).");
+}
+
 function copyBlock(): void {
 	const text = configBlock.value;
 	if (navigator.clipboard) {
@@ -581,19 +726,20 @@ async function copyDiagnostics(): Promise<void> {
 }
 
 // ── Persistence + initial OM-derived defaults ──────────────────────────────────────────────────
-watch([vendor, motorId, chip, driver, volts, fclk, toff, tbl, extraHysteresis, pwmFreqTargetHz, mode, coolStep, stallGuard, sgValue, custom, customUnits], () => {
+watch([vendor, motorId, chip, driver, volts, fclk, toff, tbl, extraHysteresis, pwmFreqTargetHz, mode, hysteresisBasis, currentScaleCs, coolStep, stallGuard, sgValue, custom, customUnits], () => {
 	try {
 		localStorage.setItem(LS_STATE, JSON.stringify({
 			vendor: vendor.value, motorId: motorId.value, chip: chip.value, driver: driver.value,
 			volts: volts.value, fclk: fclk.value, toff: toff.value, tbl: tbl.value,
 			extraHysteresis: extraHysteresis.value, pwmFreqTargetHz: pwmFreqTargetHz.value, mode: mode.value,
+			hysteresisBasis: hysteresisBasis.value, currentScaleCs: currentScaleCs.value,
 			coolStep: coolStep.value, stallGuard: stallGuard.value, sgValue: sgValue.value,
 			custom: { ...custom }, customUnits: { ...customUnits },
 		}));
 	} catch { /* storage disabled */ }
 }, { deep: true });
 
-onMounted(() => {
+onMounted(async () => {
 	try {
 		const saved = localStorage.getItem(LS_STATE);
 		if (saved) {
@@ -609,6 +755,8 @@ onMounted(() => {
 			if (typeof s.extraHysteresis === "number") extraHysteresis.value = s.extraHysteresis;
 			if (typeof s.pwmFreqTargetHz === "number") pwmFreqTargetHz.value = s.pwmFreqTargetHz;
 			if (typeof s.mode === "string") mode.value = s.mode;
+			if (s.hysteresisBasis === "rms" || s.hysteresisBasis === "peak") hysteresisBasis.value = s.hysteresisBasis;
+			if (typeof s.currentScaleCs === "number") currentScaleCs.value = s.currentScaleCs;
 			if (typeof s.coolStep === "boolean") coolStep.value = s.coolStep;
 			if (typeof s.stallGuard === "boolean") stallGuard.value = s.stallGuard;
 			if (typeof s.sgValue === "number") sgValue.value = s.sgValue;
@@ -616,18 +764,23 @@ onMounted(() => {
 			if (s.customUnits) Object.assign(customUnits, s.customUnits);
 		}
 	} catch { /* ignore */ }
-	if (!motorId.value && vendor.value !== CUSTOM) motorId.value = motorItems.value[0]?.value ?? null;
-	// Seed supply voltage + a default driver from the live machine when available.
+
+	// Load the durable, on-printer store (custom motors + per-driver assignments) before we settle the
+	// driver, so assignments can be applied.
+	store.value = await loadStore();
+
 	const vin = readVin(machineStore.model);
 	if (vin) volts.value = Math.round(vin);
-	const drivers = detected.value;
-	const tuneable = drivers.filter((d) => d.tuneable);
+	if (!motorId.value && vendor.value !== CUSTOM && vendor.value !== SAVED) motorId.value = motorItems.value[0]?.value ?? null;
+
+	// Settle the active driver (prefer the saved/last one if still present, else the first tuneable).
+	const tuneable = detected.value.filter((d) => d.tuneable);
 	if (tuneable.length && !tuneable.some((d) => d.id === driver.value)) {
-		driver.value = tuneable[0].id; // triggers the watcher → sets chip + run current
-	} else {
-		const rc = readRunCurrent(machineStore.model, driver.value);
-		if (rc) runCurrent.value = rc;
+		driver.value = tuneable[0].id;
 	}
+	// Apply its context once (assignment + auto-read), then enable the reactive watchers.
+	applyDriverContext(driver.value);
+	initialized.value = true;
 });
 </script>
 

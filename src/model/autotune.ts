@@ -47,6 +47,14 @@ export interface AutotuneOptions {
 	blankCycles?: readonly number[];
 	/** Extra hysteresis (0–8) added on top of the computed value to reduce humming. Default 0. */
 	extraHysteresis?: number;
+	/**
+	 * Current basis for the hysteresis sizing. "rms" (default) matches the Klipper/community algorithm
+	 * (uses the RMS current and a full-scale factor of 32). "peak" matches Trinamic's calculation sheet
+	 * (uses the PEAK coil current and the (CS+1) current-scale factor).
+	 */
+	hysteresisBasis?: "rms" | "peak";
+	/** TMC current-scale (CS, 0–31) for the "peak" basis only; default 31 (full scale). */
+	currentScaleCs?: number;
 	/** Target stealthChop PWM frequency, Hz (the highest chip setting at or below this is chosen). */
 	pwmFreqTargetHz?: number;
 }
@@ -203,11 +211,18 @@ export function computeAutotune(motor: MotorInput, opts: AutotuneOptions): Autot
 	const tblank = tblankCycles / fclk;
 	const tsd = (12 + 32 * toff) / fclk;
 
+	// Hysteresis current basis: Trinamic's sheet uses PEAK current + (CS+1); the default/Klipper path
+	// uses RMS + 32. (effI is the RMS used for PWM_OFS; peak = effI·√2.)
+	const basis = opts.hysteresisBasis ?? "rms";
+	const cs = Math.max(0, Math.min(31, Math.round(opts.currentScaleCs ?? 31)));
+	const hystCurrent = basis === "peak" ? effI * Math.SQRT2 : effI;
+	const hystScale = basis === "peak" ? cs + 1 : 32;
+
 	// Coil current slopes during blanking and slow decay, used to size the hysteresis window.
 	const dcoilblank = (V * tblank) / L;
-	const dcoilsd = (R * effI * 2 * tsd) / L;
+	const dcoilsd = (R * hystCurrent * 2 * tsd) / L;
 
-	const hstartmin = Math.ceil(Math.max(0.5 + (((dcoilblank + dcoilsd) * 2 * 248 * 32) / effI) / 32 - 8, -2));
+	const hstartmin = Math.ceil(Math.max(0.5 + (((dcoilblank + dcoilsd) * 2 * 248 * hystScale) / hystCurrent) / 32 - 8, -2));
 	// Add any extra hysteresis, then cap the total at 14 before splitting into HSTRT/HEND.
 	const htotal = Math.min(hstartmin + extra, 14);
 	const hstrt = clamp(htotal, 1, 8);

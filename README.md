@@ -36,6 +36,14 @@ A Duet Web Control **3.7** plugin (Vue 3 / Vuetify 4).
 - A motor datasheet (or a database match) for resistance, inductance, holding torque, rated current
   and steps/rev. The built-in database is kept in sync with the upstream community motor list by a
   scheduled workflow (`update-motors`) that opens a PR when new motors appear.
+- **Custom motors** can be entered in datasheet units (inductance mH/µH/H, torque N·cm/kgf·cm/N·m,
+  current A/mA) and **saved onto the printer** (`0:/sys/duet-tmc-tuner.json`), so they survive plugin
+  updates and DWC settings resets. The plugin also **remembers the motor + chip per driver** in the
+  same file, and you can copy a saved motor as a database entry to contribute upstream.
+- **Hysteresis basis**: defaults to the Klipper/community RMS method; an optional **Trinamic-exact
+  (peak current + CS)** mode matches Trinamic's calculation spreadsheets.
+- Picking a driver (while connected) **auto-detects the chip and reads the live registers**, and
+  **Apply now stays disabled until the registers have been read**, so writes are always read-modify-write.
 
 > ⚠️ Direct register writes are powerful. Always review the decoded values, test at low speed, and keep
 > a copy of your working config. RRF programs these registers itself from `M569`/`M906`/microstepping,
