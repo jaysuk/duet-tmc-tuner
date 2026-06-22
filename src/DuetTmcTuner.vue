@@ -266,12 +266,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 
-import HelpTip from "./HelpTip.vue";
 import i18n from "@/i18n";
 import { useMachineStore } from "@/stores/machine";
 import { LogLevel, useUiStore } from "@/stores/ui";
 
-import { buildReport, copyReport, downloadReport } from "dwc-plugin-runtime";
+import { buildReport, copyReport, downloadReport, HelpTip } from "dwc-plugin-runtime";
 
 import { computeAutotune, computeThresholds, type AutotuneResult, type MotorInput, type TuningMode } from "./model/autotune";
 import { type AdvancedPlan, buildConfigBlock, buildReadCommands, buildRegisterWrites, type CurrentRegisters } from "./model/apply";
