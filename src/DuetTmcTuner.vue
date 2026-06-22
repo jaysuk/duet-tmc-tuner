@@ -12,9 +12,10 @@
 					<v-tabs-window-item value="tune">
 						<v-card-text>
 							<v-alert type="info" density="compact" variant="tonal" class="mb-4">
-								Computes quiet stealthChop chopper + PWM register values from a motor's electrical specs and
-								writes them <strong>directly to the driver registers</strong> with <code>M569.2</code>. Read the
-								live registers first so only the tuned fields change (your microstep/current bits are kept).
+								Computes spreadCycle chopper (CHOPCONF) and stealthChop (PWMCONF) register values from a
+								motor's electrical specs — plus optional stealthChop↔spreadCycle thresholds — and writes them
+								<strong>directly to the driver registers</strong> with <code>M569.2</code>. Read the live
+								registers first so only the tuned fields change (your microstep/current bits are kept).
 							</v-alert>
 							<div class="d-flex justify-end mb-2">
 								<v-btn size="small" variant="text" prepend-icon="mdi-backup-restore" @click="resetToDefault"
@@ -209,10 +210,11 @@
 					<v-tabs-window-item value="about">
 						<v-card-text>
 							<p class="text-body-2 text-medium-emphasis mb-4">
-								Duet TMC Tuner derives stealthChop chopper/PWM register values from a motor's datasheet
-								constants (resistance, inductance, holding torque, rated current, steps/rev) and the supply
-								voltage, using the Trinamic datasheet initial-value equations, then writes them straight to the
-								driver registers with <code>M569.2</code>. Built-in database of {{ motorCount }} motors.
+								Duet TMC Tuner derives spreadCycle chopper (CHOPCONF) and stealthChop (PWMCONF) register
+								values from a motor's datasheet constants (resistance, inductance, holding torque, rated
+								current, steps/rev) and the supply voltage, using the Trinamic datasheet initial-value
+								equations, then writes them straight to the driver registers with <code>M569.2</code>.
+								Built-in database of {{ motorCount }} motors.
 							</p>
 
 							<div class="d-flex align-center mb-1">
