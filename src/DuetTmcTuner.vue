@@ -26,12 +26,12 @@
 								<v-col cols="12" md="6">
 									<div class="text-subtitle-2 mb-2">Motor</div>
 									<v-select v-model="vendor" :items="vendorItems" label="Manufacturer" density="compact"
-											  variant="outlined" hide-details class="mb-2">
+											  variant="outlined" hide-details class="mb-2" @update:model-value="onVendorPicked">
 										<template #append-inner><HelpTip text="Manufacturer used to filter the motor list. Pick 'Custom' to enter datasheet values yourself." /></template>
 									</v-select>
 									<v-select v-if="vendor !== CUSTOM" v-model="motorId" :items="motorItems" label="Motor"
 											  density="compact" variant="outlined" hide-details
-											  :hint="motorHint" persistent-hint class="mb-2">
+											  :hint="motorHint" persistent-hint class="mb-2" @update:model-value="onMotorPicked">
 										<template #append-inner><HelpTip text="Your motor. Its resistance, inductance, holding torque, rated current and steps/rev drive the calculation." /></template>
 									</v-select>
 									<template v-else>
@@ -68,7 +68,7 @@
 									<div class="text-subtitle-2 mb-2">Driver</div>
 									<v-row dense>
 										<v-col cols="6"><v-combobox v-model="driver" :items="driverItems" :return-object="false" label="Driver (M569.2 P)" :hint="detectedHint" persistent-hint density="compact" variant="outlined"><template #append-inner><HelpTip text="The driver to tune, as M569.2's P value (board.driver, e.g. 0.0 or 121.0). Auto-detected; the list shows each driver's mapped axis." :href="DOC.gcodes" /></template></v-combobox></v-col>
-										<v-col cols="6"><v-select v-model="chip" :items="chipItems" label="Driver chip" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="TMC chip family. Use 'Detect chip' to read it from the driver's IOIN version over M569.2." :href="DOC.gcodes" /></template></v-select></v-col>
+										<v-col cols="6"><v-select v-model="chip" :items="chipItems" label="Driver chip" density="compact" variant="outlined" hide-details @update:model-value="onChipPicked"><template #append-inner><HelpTip text="TMC chip family. Use 'Detect chip' to read it from the driver's IOIN version over M569.2." :href="DOC.gcodes" /></template></v-select></v-col>
 										<v-col cols="4"><v-text-field v-model.number="volts" type="number" label="Voltage (V)" density="compact" variant="outlined" hide-details class="mt-2"><template #append-inner><HelpTip text="Motor power-supply voltage (VIN). Auto-read from the board when connected." /></template></v-text-field></v-col>
 										<v-col cols="4"><v-text-field v-model.number="runCurrent" type="number" label="Run current (A peak)" density="compact" variant="outlined" hide-details clearable placeholder="rated" class="mt-2"><template #append-inner><HelpTip text="Your configured run current (M906, PEAK). Converted ÷√2 to RMS for the formulas. Clear to use the motor's rated current." :href="DOC.gcodes" /></template></v-text-field></v-col>
 										<v-col cols="4"><v-text-field v-model.number="fclk" type="number" label="Clock (Hz)" density="compact" variant="outlined" hide-details class="mt-2"><template #append-inner><HelpTip text="TMC driver internal clock used by the formulas (chip default; rarely changed)." /></template></v-text-field></v-col>
@@ -256,7 +256,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 
 import HelpTip from "./HelpTip.vue";
 import i18n from "@/i18n";
@@ -295,7 +295,6 @@ const motorCount = MOTOR_DATABASE.length;
 // ── Persistent store kept on the printer (custom motors + per-driver assignments) ──────────────
 const SAVED = "__saved__";
 const store = ref<TunerStore>(emptyStore());
-let restoring = false; // suppresses assignment auto-save while we restore a driver's saved selection
 
 // ── Motor selection ────────────────────────────────────────────────────────────────────────────
 const vendors = Array.from(new Set(MOTOR_DATABASE.map((m) => m.vendor))).sort();
@@ -438,19 +437,18 @@ watch(chip, () => {
 
 const initialized = ref(false);
 
-/** Apply a driver's context: restore its saved/board chip + motor, read its run current, auto-detect. */
+/**
+ * Apply a driver's context: restore its saved/board chip + motor, read its run current, auto-detect.
+ * No save happens here — assignments are written only on explicit user actions (see rememberCurrent),
+ * so restoring can never overwrite or be mis-attributed to the wrong driver during rapid switching.
+ */
 function applyDriverContext(id: string): void {
 	const a = store.value.assignments[id];
 	const d = detected.value.find((x) => x.id === id);
-	restoring = true;
-	try {
-		// Prefer a remembered (saved-on-printer) assignment, else the board-inferred chip.
-		if (a?.chip) chip.value = a.chip;
-		else if (d?.chip) chip.value = d.chip;
-		if (a?.motorId) selectMotorById(a.motorId);
-	} finally {
-		restoring = false;
-	}
+	// Prefer a remembered (saved-on-printer) assignment, else the board-inferred chip.
+	if (a?.chip) chip.value = a.chip;
+	else if (d?.chip) chip.value = d.chip;
+	if (a?.motorId) selectMotorById(a.motorId);
 	const rc = readRunCurrent(machineStore.model, id);
 	if (rc) runCurrent.value = rc;
 	void autoReadDriver(); // identify chip + read live registers as soon as a driver is chosen
@@ -565,6 +563,7 @@ async function detectChip(): Promise<void> {
 		}
 		if (match) {
 			chip.value = match.chip;
+			rememberCurrent(); // persist the detected chip against this driver
 			uiStore.makeNotification(LogLevel.success, title, `Detected ${match.chip} on driver ${driver.value}.`);
 		} else {
 			uiStore.makeNotification(LogLevel.warning, title, `Couldn't identify the chip on driver ${driver.value} — pick it manually.`);
@@ -630,15 +629,23 @@ function persistStore(): void {
 	if (saveTimer) clearTimeout(saveTimer);
 	saveTimer = setTimeout(() => { void saveStore(store.value); }, 500);
 }
-// Remember the selected motor + chip against the current driver (skipped while restoring).
-watch([motorId, chip, vendor], () => {
-	if (!initialized.value || restoring || !driver.value) return;
+/**
+ * Remember the current motor + chip against the CURRENT driver. Called only from explicit user actions
+ * (motor/chip/vendor picks, chip detect, custom-motor save) — never from programmatic restores — and it
+ * captures `driver.value` synchronously, so a selection is always saved against the right driver.
+ */
+function rememberCurrent(): void {
+	if (!initialized.value || !driver.value) return;
 	store.value.assignments[driver.value] = {
 		motorId: vendor.value === CUSTOM ? undefined : motorId.value ?? undefined,
 		chip: chip.value,
 	};
 	persistStore();
-});
+}
+function onMotorPicked(): void { rememberCurrent(); }
+function onChipPicked(): void { rememberCurrent(); }
+// Vendor change auto-selects the first motor asynchronously; remember after that settles.
+function onVendorPicked(): void { void nextTick(rememberCurrent); }
 
 const saveMotorDialog = ref(false);
 const saveMotorName = ref("");
@@ -658,6 +665,7 @@ function confirmSaveMotor(): void {
 	saveMotorDialog.value = false;
 	vendor.value = SAVED;
 	motorId.value = name;
+	void nextTick(rememberCurrent); // remember this saved motor against the current driver
 	uiStore.makeNotification(LogLevel.success, i18n.global.t("plugins.duetTmcTuner.title"), `Saved "${name}" to the printer.`);
 }
 /** Klipper-style cfg entry, for contributing a motor to the shared database via PR. */
