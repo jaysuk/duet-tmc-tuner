@@ -174,11 +174,13 @@ export function discoverDrivers(model: unknown): Array<DiscoveredDriver> {
 		for (let j = 0; j < count; j++) {
 			const id = `${canAddr}.${j}`;
 			const axis = assigned.get(id);
-			const chipText = fam.chip ?? "unknown";
+			// When the board didn't reveal a chip (unknown third-party board), show just the id — the
+			// user picks the chip or reads it with "Detect chip". Avoids a misleading "unknown".
+			const idPart = fam.chip ? `${fam.chip} (${id})` : id;
 			out.push({
 				id, board: boardName, family: fam.family, chip: fam.chip, tuneable: fam.tuneable,
 				assignedTo: axis,
-				label: `${axis ? axis + " — " : ""}${chipText} (${id})${fam.tuneable ? "" : " — not tuneable"}`,
+				label: `${axis ? axis + " — " : ""}${idPart}${fam.tuneable ? "" : " — not tuneable"}`,
 			});
 		}
 	}

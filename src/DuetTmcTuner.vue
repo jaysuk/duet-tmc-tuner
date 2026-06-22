@@ -338,7 +338,9 @@ const detectedHint = computed(() => {
 	if (!d) return detected.value.length ? "Not a detected driver — check the P value." : "Connect to auto-detect drivers, or type the M569.2 P value.";
 	const axis = d.assignedTo ? `Axis ${d.assignedTo} · ` : "Unassigned · ";
 	if (!d.tuneable) return `${axis}${d.chip ?? "External"} on ${d.board} — not tuneable via M569.2.`;
-	return `${axis}${d.chip} on ${d.board}`;
+	// Show the effective (selected/detected) chip; note when the board didn't auto-identify it.
+	const note = d.chip ? "" : " · chip not auto-detected — use Detect chip to confirm";
+	return `${axis}${chip.value} on ${d.board}${note}`;
 });
 const volts = ref<number>(24);
 const runCurrent = ref<number | null>(null);
@@ -463,16 +465,28 @@ const detecting = ref(false);
 const busy = computed(() => reading.value || applyingRegs.value || detecting.value);
 const copied = ref(false);
 
+const sleepMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** Read one driver register word over M569.2 for the selected driver. */
+async function readReg(addr: number): Promise<number | null> {
+	return parseRegisterValue(await machineStore.sendCode(`M569.2 P${driver.value} R${addr}`, false, false));
+}
+
 // Identify the chip on the selected driver by reading its IOIN VERSION byte (the reliable way on the
-// STM32 port, where the object model doesn't carry the chip type).
+// STM32 port, where the object model doesn't carry the chip type). The FIRST M569.2 read after a page
+// load is often stale (RRF returns a cached/empty value before the driver is actually read), so we
+// retry a few times until the version byte resolves to a known chip.
 async function detectChip(): Promise<void> {
 	if (!isConnected.value) return;
 	detecting.value = true;
 	try {
-		const uartReply = await machineStore.sendCode(`M569.2 P${driver.value} R${IOIN_ADDRESSES.uart}`, false, false);
-		const spiReply = await machineStore.sendCode(`M569.2 P${driver.value} R${IOIN_ADDRESSES.spi}`, false, false);
-		const match = chipFromIoin({ uart: parseRegisterValue(uartReply), spi: parseRegisterValue(spiReply) });
 		const title = i18n.global.t("plugins.duetTmcTuner.title");
+		let match: ReturnType<typeof chipFromIoin> = null;
+		for (let attempt = 0; attempt < 4 && !match; attempt++) {
+			if (attempt > 0) await sleepMs(200);
+			const uart = await readReg(IOIN_ADDRESSES.uart);
+			const spi = await readReg(IOIN_ADDRESSES.spi);
+			match = chipFromIoin({ uart, spi });
+		}
 		if (match) {
 			chip.value = match.chip;
 			uiStore.makeNotification(LogLevel.success, title, `Detected ${match.chip} on driver ${driver.value}.`);
@@ -491,6 +505,8 @@ async function readBack(): Promise<void> {
 	reading.value = true;
 	try {
 		const [chopCmd, pwmCmd] = buildReadCommands(family.value, driver.value);
+		// Prime: the first M569.2 read after a page load can be stale — discard one, then read for real.
+		await machineStore.sendCode(chopCmd, false, false);
 		const chopReply = await machineStore.sendCode(chopCmd, false, false);
 		const pwmReply = await machineStore.sendCode(pwmCmd, false, false);
 		currentRegs.value = {
