@@ -91,10 +91,8 @@
 													{{ chip }} has no CoolStep / StallGuard.
 												</v-alert>
 												<template v-else>
-													<div class="d-flex flex-wrap ga-x-6">
-														<v-switch v-model="coolStep" color="primary" density="compact" hide-details label="CoolStep (dynamic current)" />
-														<v-switch v-model="stallGuard" color="primary" density="compact" hide-details label="StallGuard (sensorless)" />
-													</div>
+													<v-switch v-model="coolStep" color="primary" density="compact" hide-details label="CoolStep (dynamic current)" />
+													<v-switch v-model="stallGuard" color="primary" density="compact" hide-details label="StallGuard (sensorless)" />
 													<v-text-field v-if="stallGuard" v-model.number="sgValue" type="number" :min="sgRange.min" :max="sgRange.max"
 														              density="compact" variant="outlined" hide-details class="mt-2" :label="sgRange.label">
 															<template #append-inner><HelpTip text="StallGuard threshold. Higher = less sensitive. Affects sensorless homing and usually needs tuning per machine." :href="DOC.stall" /></template>
