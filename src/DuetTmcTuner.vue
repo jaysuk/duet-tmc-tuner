@@ -22,19 +22,33 @@
 								<v-col cols="12" md="6">
 									<div class="text-subtitle-2 mb-2">Motor</div>
 									<v-select v-model="vendor" :items="vendorItems" label="Manufacturer" density="compact"
-											  variant="outlined" hide-details class="mb-2" />
+											  variant="outlined" hide-details class="mb-2">
+										<template #append-inner><HelpTip text="Manufacturer used to filter the motor list. Pick 'Custom' to enter datasheet values yourself." /></template>
+									</v-select>
 									<v-select v-if="vendor !== CUSTOM" v-model="motorId" :items="motorItems" label="Motor"
 											  density="compact" variant="outlined" hide-details
-											  :hint="motorHint" persistent-hint class="mb-2" />
+											  :hint="motorHint" persistent-hint class="mb-2">
+										<template #append-inner><HelpTip text="Your motor. Its resistance, inductance, holding torque, rated current and steps/rev drive the calculation." /></template>
+									</v-select>
 									<template v-else>
 										<v-row dense>
-											<v-col cols="6"><v-text-field v-model.number="custom.resistance" type="number" label="Resistance (Ω)" density="compact" variant="outlined" hide-details /></v-col>
-											<v-col cols="6"><v-text-field v-model.number="custom.stepsPerRev" type="number" label="Steps / rev" density="compact" variant="outlined" hide-details /></v-col>
-											<v-col cols="8"><v-text-field v-model.number="custom.inductance" type="number" label="Inductance" density="compact" variant="outlined" hide-details /></v-col>
+											<v-col cols="6"><v-text-field v-model.number="custom.resistance" type="number" label="Resistance (Ω)" density="compact" variant="outlined" hide-details>
+												<template #append-inner><HelpTip text="Motor phase (coil) resistance in ohms, from its datasheet." /></template>
+											</v-text-field></v-col>
+											<v-col cols="6"><v-text-field v-model.number="custom.stepsPerRev" type="number" label="Steps / rev" density="compact" variant="outlined" hide-details>
+												<template #append-inner><HelpTip text="Full steps per revolution: 200 for a 1.8° motor, 400 for a 0.9° motor." /></template>
+											</v-text-field></v-col>
+											<v-col cols="8"><v-text-field v-model.number="custom.inductance" type="number" label="Inductance" density="compact" variant="outlined" hide-details>
+												<template #append-inner><HelpTip text="Motor phase inductance from the datasheet. Pick the unit on the right (datasheets usually quote mH)." /></template>
+											</v-text-field></v-col>
 											<v-col cols="4"><v-select v-model="customUnits.inductance" :items="inductanceUnits" label="Unit" density="compact" variant="outlined" hide-details /></v-col>
-											<v-col cols="8"><v-text-field v-model.number="custom.holdingTorque" type="number" label="Holding torque" density="compact" variant="outlined" hide-details /></v-col>
+											<v-col cols="8"><v-text-field v-model.number="custom.holdingTorque" type="number" label="Holding torque" density="compact" variant="outlined" hide-details>
+												<template #append-inner><HelpTip text="Motor holding torque from the datasheet. Pick the unit on the right (commonly N·cm or kgf·cm)." /></template>
+											</v-text-field></v-col>
 											<v-col cols="4"><v-select v-model="customUnits.holdingTorque" :items="torqueUnits" label="Unit" density="compact" variant="outlined" hide-details /></v-col>
-											<v-col cols="8"><v-text-field v-model.number="custom.maxCurrent" type="number" label="Rated current" density="compact" variant="outlined" hide-details /></v-col>
+											<v-col cols="8"><v-text-field v-model.number="custom.maxCurrent" type="number" label="Rated current" density="compact" variant="outlined" hide-details>
+												<template #append-inner><HelpTip text="Motor rated (maximum) phase current from the datasheet — NOT your configured run current." /></template>
+											</v-text-field></v-col>
 											<v-col cols="4"><v-select v-model="customUnits.current" :items="currentUnits" label="Unit" density="compact" variant="outlined" hide-details /></v-col>
 										</v-row>
 										<div class="text-caption text-medium-emphasis mt-1">≈ {{ customBaseSummary }}</div>
@@ -45,11 +59,11 @@
 								<v-col cols="12" md="6">
 									<div class="text-subtitle-2 mb-2">Driver</div>
 									<v-row dense>
-										<v-col cols="6"><v-combobox v-model="driver" :items="driverItems" :return-object="false" label="Driver (M569.2 P)" :hint="detectedHint" persistent-hint density="compact" variant="outlined" /></v-col>
-										<v-col cols="6"><v-select v-model="chip" :items="chipItems" label="Driver chip" density="compact" variant="outlined" hide-details /></v-col>
-										<v-col cols="4"><v-text-field v-model.number="volts" type="number" label="Voltage (V)" density="compact" variant="outlined" hide-details class="mt-2" /></v-col>
-										<v-col cols="4"><v-text-field v-model.number="runCurrent" type="number" label="Run current (A peak)" density="compact" variant="outlined" hide-details clearable placeholder="rated" class="mt-2" /></v-col>
-										<v-col cols="4"><v-text-field v-model.number="fclk" type="number" label="Clock (Hz)" density="compact" variant="outlined" hide-details class="mt-2" /></v-col>
+										<v-col cols="6"><v-combobox v-model="driver" :items="driverItems" :return-object="false" label="Driver (M569.2 P)" :hint="detectedHint" persistent-hint density="compact" variant="outlined"><template #append-inner><HelpTip text="The driver to tune, as M569.2's P value (board.driver, e.g. 0.0 or 121.0). Auto-detected; the list shows each driver's mapped axis." :href="DOC.gcodes" /></template></v-combobox></v-col>
+										<v-col cols="6"><v-select v-model="chip" :items="chipItems" label="Driver chip" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="TMC chip family. Use 'Detect chip' to read it from the driver's IOIN version over M569.2." :href="DOC.gcodes" /></template></v-select></v-col>
+										<v-col cols="4"><v-text-field v-model.number="volts" type="number" label="Voltage (V)" density="compact" variant="outlined" hide-details class="mt-2"><template #append-inner><HelpTip text="Motor power-supply voltage (VIN). Auto-read from the board when connected." /></template></v-text-field></v-col>
+										<v-col cols="4"><v-text-field v-model.number="runCurrent" type="number" label="Run current (A peak)" density="compact" variant="outlined" hide-details clearable placeholder="rated" class="mt-2"><template #append-inner><HelpTip text="Your configured run current (M906, PEAK). Converted ÷√2 to RMS for the formulas. Clear to use the motor's rated current." :href="DOC.gcodes" /></template></v-text-field></v-col>
+										<v-col cols="4"><v-text-field v-model.number="fclk" type="number" label="Clock (Hz)" density="compact" variant="outlined" hide-details class="mt-2"><template #append-inner><HelpTip text="TMC driver internal clock used by the formulas (chip default; rarely changed)." /></template></v-text-field></v-col>
 									</v-row>
 									<div class="text-caption text-medium-emphasis mt-1">
 										Drivers on the mainboard, expansion and toolboards are auto-detected from the object model.
@@ -57,15 +71,17 @@
 									<div class="text-caption text-medium-emphasis">{{ currentNote }}</div>
 									<v-select v-model="mode" :items="modeItems" label="Tuning mode" density="compact" variant="outlined"
 											  hide-details class="mt-2"
-											  hint="Adds the stealthChop↔spreadCycle velocity thresholds (TPWMTHRS/THIGH). Needs M569 stealthChop (D3) enabled to take effect." persistent-hint />
+											  hint="Adds the stealthChop↔spreadCycle velocity thresholds (TPWMTHRS/THIGH). Needs M569 stealthChop (D3) enabled to take effect." persistent-hint>
+										<template #append-inner><HelpTip text="Tuning mode — sets the stealthChop↔spreadCycle velocity thresholds (TPWMTHRS/THIGH). Needs M569 D3 (stealthChop) to take effect." :href="DOC.tuning" /></template>
+									</v-select>
 									<v-expansion-panels class="mt-2" variant="accordion">
 										<v-expansion-panel title="Advanced (chopper)">
 											<v-expansion-panel-text>
 												<v-row dense>
-													<v-col cols="3"><v-text-field v-model.number="toff" type="number" label="TOFF (1–15)" density="compact" variant="outlined" hide-details /></v-col>
-													<v-col cols="3"><v-text-field v-model.number="tbl" type="number" label="TBL (0–3)" density="compact" variant="outlined" hide-details /></v-col>
-													<v-col cols="3"><v-text-field v-model.number="extraHysteresis" type="number" label="Extra hyst." density="compact" variant="outlined" hide-details /></v-col>
-													<v-col cols="3"><v-text-field v-model.number="pwmFreqTargetHz" type="number" label="PWM Hz" density="compact" variant="outlined" hide-details /></v-col>
+													<v-col cols="3"><v-text-field v-model.number="toff" type="number" label="TOFF (1–15)" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="Chopper off-time (CHOPCONF TOFF), 1–15. The autotune default is 3." :href="DOC.tuning" /></template></v-text-field></v-col>
+													<v-col cols="3"><v-text-field v-model.number="tbl" type="number" label="TBL (0–3)" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="Comparator blank time (CHOPCONF TBL), 0–3. The autotune default is 1." :href="DOC.tuning" /></template></v-text-field></v-col>
+													<v-col cols="3"><v-text-field v-model.number="extraHysteresis" type="number" label="Extra hyst." density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="Extra chopper hysteresis (0–8) added on top of the computed value to reduce audible motor hum." :href="DOC.tuning" /></template></v-text-field></v-col>
+													<v-col cols="3"><v-text-field v-model.number="pwmFreqTargetHz" type="number" label="PWM Hz" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="Target stealthChop PWM frequency. The highest chip setting at or below this is used (55 kHz for 22xx, 20 kHz for 5160/2240)." :href="DOC.tuning" /></template></v-text-field></v-col>
 												</v-row>
 											</v-expansion-panel-text>
 										</v-expansion-panel>
@@ -80,7 +96,9 @@
 														<v-switch v-model="stallGuard" color="primary" density="compact" hide-details label="StallGuard (sensorless)" />
 													</div>
 													<v-text-field v-if="stallGuard" v-model.number="sgValue" type="number" :min="sgRange.min" :max="sgRange.max"
-														              density="compact" variant="outlined" hide-details class="mt-2" :label="sgRange.label" />
+														              density="compact" variant="outlined" hide-details class="mt-2" :label="sgRange.label">
+															<template #append-inner><HelpTip text="StallGuard threshold. Higher = less sensitive. Affects sensorless homing and usually needs tuning per machine." :href="DOC.stall" /></template>
+														</v-text-field>
 													<v-alert v-if="coolStep || stallGuard" type="warning" density="compact" variant="tonal" class="mt-2">
 														These change dynamic current / sensorless-homing sensitivity. Test carefully — the StallGuard threshold usually needs per-machine tuning.
 													</v-alert>
@@ -214,6 +232,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 
+import HelpTip from "./HelpTip.vue";
 import i18n from "@/i18n";
 import { useMachineStore } from "@/stores/machine";
 import { LogLevel, useUiStore } from "@/stores/ui";
@@ -237,6 +256,13 @@ const uiStore = useUiStore();
 
 const CUSTOM = "__custom__";
 const tab = ref("tune");
+
+// Relevant Duet documentation pages, linked from the field help icons.
+const DOC = {
+	gcodes: "https://docs.duet3d.com/en/User_manual/Reference/Gcodes",
+	tuning: "https://docs.duet3d.com/en/User_manual/Connecting_hardware/Motors_tuning",
+	stall: "https://docs.duet3d.com/en/User_manual/Connecting_hardware/Sensors_stall_detection",
+};
 const motorCount = MOTOR_DATABASE.length;
 
 // ── Motor selection ────────────────────────────────────────────────────────────────────────────
