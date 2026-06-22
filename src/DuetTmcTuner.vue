@@ -271,7 +271,7 @@ import { DRIVER_FAMILIES, familyForChip, supportedFamilies, supportsCoolStep } f
 import { LS_STATE, PLUGIN_MANIFEST_ID } from "./model/constants";
 import { chipFromIoin, discoverDrivers, IOIN_ADDRESSES, parseRegisterValue, peakToRms, readRunCurrent, readVin } from "./model/machine";
 import { MOTOR_DATABASE, type MotorSpec } from "./model/motorDatabase";
-import { emptyStore, loadStore, saveStore, type TunerStore } from "./model/storage";
+import { emptyStore, loadStore, parseStore, saveStore, type TunerStore } from "./model/storage";
 import { decodeFields } from "./model/registers";
 import {
 	applying, applyUpdateNow, checking, dismissCurrentUpdate, pendingReload,
@@ -623,9 +623,19 @@ async function autoReadDriver(): Promise<void> {
 	await readBack();
 }
 
-// ── Persistence to the printer: remember the motor/chip per driver, and saved custom motors ──────
+// ── Persistence: an immediate localStorage mirror (survives plugin updates in this browser) PLUS the
+//    authoritative on-printer SD copy (survives DWC resets / other browsers). The localStorage mirror
+//    is the safety net so a save can't be lost to a debounce race or a brief disconnect. ────────────
+const LS_STORE = "duetTmcTuner.store";
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
+function writeLocalStore(): void {
+	try { localStorage.setItem(LS_STORE, JSON.stringify(store.value)); } catch { /* storage disabled */ }
+}
+function readLocalStore(): TunerStore {
+	try { return parseStore(localStorage.getItem(LS_STORE) ?? ""); } catch { return emptyStore(); }
+}
 function persistStore(): void {
+	writeLocalStore(); // immediate, never lost to a reload
 	if (saveTimer) clearTimeout(saveTimer);
 	saveTimer = setTimeout(() => { void saveStore(store.value); }, 500);
 }
@@ -653,7 +663,7 @@ function openSaveMotor(): void {
 	saveMotorName.value = "";
 	saveMotorDialog.value = true;
 }
-function confirmSaveMotor(): void {
+async function confirmSaveMotor(): Promise<void> {
 	const name = saveMotorName.value.trim();
 	const b = customBase.value;
 	if (!name || !motorInput.value) return;
@@ -661,12 +671,19 @@ function confirmSaveMotor(): void {
 	const existing = store.value.customMotors.findIndex((m) => m.id === name);
 	if (existing >= 0) store.value.customMotors.splice(existing, 1, spec);
 	else store.value.customMotors.push(spec);
-	persistStore();
+	writeLocalStore(); // keep it locally immediately (survives a plugin update in this browser)
 	saveMotorDialog.value = false;
 	vendor.value = SAVED;
 	motorId.value = name;
 	void nextTick(rememberCurrent); // remember this saved motor against the current driver
-	uiStore.makeNotification(LogLevel.success, i18n.global.t("plugins.duetTmcTuner.title"), `Saved "${name}" to the printer.`);
+	const title = i18n.global.t("plugins.duetTmcTuner.title");
+	// Write to the SD now (awaited, not debounced) and report honestly whether it persisted there.
+	const ok = await saveStore(store.value);
+	if (ok) {
+		uiStore.makeNotification(LogLevel.success, title, `Saved "${name}" to the printer's SD card.`);
+	} else {
+		uiStore.makeNotification(LogLevel.warning, title, `Saved "${name}" in this browser, but couldn't write to the printer (not connected?). It will sync to the SD card next time you save while connected.`);
+	}
 }
 /** Klipper-style cfg entry, for contributing a motor to the shared database via PR. */
 function copyMotorForSharing(): void {
@@ -773,9 +790,22 @@ onMounted(async () => {
 		}
 	} catch { /* ignore */ }
 
-	// Load the durable, on-printer store (custom motors + per-driver assignments) before we settle the
-	// driver, so assignments can be applied.
-	store.value = await loadStore();
+	// Merge the on-printer SD store (authoritative) with the localStorage mirror (safety net), so a save
+	// that didn't reach the SD — e.g. a debounce race before a plugin-update reload — isn't lost.
+	const local = readLocalStore();
+	const sd = await loadStore();
+	const motorsById = new Map<string, MotorSpec>();
+	for (const m of local.customMotors) motorsById.set(m.id, m);
+	for (const m of sd.customMotors) motorsById.set(m.id, m); // SD wins on conflict
+	store.value = {
+		version: 1,
+		customMotors: Array.from(motorsById.values()),
+		assignments: { ...local.assignments, ...sd.assignments }, // SD wins
+	};
+	// Heal: if the local mirror held anything the SD lacked, push the merged store back to the SD now.
+	const sdMotors = new Set(sd.customMotors.map((m) => m.id));
+	const localOnly = local.customMotors.some((m) => !sdMotors.has(m.id)) || Object.keys(local.assignments).some((k) => !(k in sd.assignments));
+	if (machineStore.isConnected && localOnly) void saveStore(store.value);
 
 	const vin = readVin(machineStore.model);
 	if (vin) volts.value = Math.round(vin);
