@@ -37,8 +37,10 @@ A Duet Web Control **3.7** plugin (Vue 3 / Vuetify 4).
   and steps/rev. The built-in database is kept in sync with the upstream community motor list by a
   scheduled workflow (`update-motors`) that opens a PR when new motors appear.
 - **Custom motors** can be entered in datasheet units (inductance mH/µH/H, torque N·cm/kgf·cm/N·m,
-  current A/mA) and **saved onto the printer** (`0:/sys/duet-tmc-tuner.json`), so they survive plugin
-  updates and DWC settings resets. The plugin also **remembers the motor + chip per driver** in the
+  current A/mA) with the **rated current set as RMS or peak** to match the datasheet — the maths uses
+  RMS internally and scales a peak rating by 1/√2 (LDO datasheets quote RMS). They can be **saved onto
+  the printer** (`0:/sys/duet-tmc-tuner.json`), so they survive plugin updates and DWC settings resets,
+  and **edited or deleted** later. The plugin also **remembers the motor + chip per driver** in the
   same file, and you can copy a saved motor as a database entry to contribute upstream.
 - **Hysteresis basis**: defaults to the Klipper/community RMS method; an optional **Trinamic-exact
   (peak current + CS)** mode matches Trinamic's calculation spreadsheets.

@@ -54,10 +54,11 @@
 												<template #append-inner><HelpTip text="Motor holding torque from the datasheet. Pick the unit on the right (commonly N·cm or kgf·cm)." /></template>
 											</v-text-field></v-col>
 											<v-col cols="4"><v-select v-model="customUnits.holdingTorque" :items="torqueUnits" label="Unit" density="compact" variant="outlined" hide-details /></v-col>
-											<v-col cols="8"><v-text-field v-model.number="custom.maxCurrent" type="number" label="Rated current" density="compact" variant="outlined" hide-details>
-												<template #append-inner><HelpTip text="Motor rated (maximum) phase current from the datasheet — NOT your configured run current." /></template>
+											<v-col cols="6"><v-text-field v-model.number="custom.maxCurrent" type="number" label="Rated current" density="compact" variant="outlined" hide-details>
+												<template #append-inner><HelpTip text="Motor rated phase current from the datasheet — NOT your configured run current. Set RMS or peak to match how the datasheet quotes it (LDO datasheets are RMS); the maths uses RMS internally." /></template>
 											</v-text-field></v-col>
-											<v-col cols="4"><v-select v-model="customUnits.current" :items="currentUnits" label="Unit" density="compact" variant="outlined" hide-details /></v-col>
+											<v-col cols="3"><v-select v-model="customUnits.current" :items="currentUnits" label="Unit" density="compact" variant="outlined" hide-details /></v-col>
+											<v-col cols="3"><v-select v-model="customUnits.currentBasis" :items="currentBasisItems" label="RMS / peak" density="compact" variant="outlined" hide-details /></v-col>
 										</v-row>
 										<div class="text-caption text-medium-emphasis mt-1">≈ {{ customBaseSummary }}</div>
 										<div v-if="editingMotorId" class="text-caption text-primary mt-1">Editing saved motor “{{ editingMotorId }}” — save to update it (change the name to save a copy).</div>
@@ -313,10 +314,13 @@ const motorId = ref<string | null>(null);
 // Custom motor: values are entered in the user-selected units below and converted to base (Ω, H, Nm,
 // A) for the engine — datasheets quote inductance in mH and torque in N·cm or kgf·cm, so let them pick.
 const custom = reactive({ resistance: 1.5, inductance: 1.5, holdingTorque: 40, maxCurrent: 1.5, stepsPerRev: 200 });
-const customUnits = reactive({ inductance: "mH", holdingTorque: "Ncm", current: "A" });
+const customUnits = reactive({ inductance: "mH", holdingTorque: "Ncm", current: "A", currentBasis: "rms" });
 const inductanceUnits = [{ title: "mH", value: "mH" }, { title: "µH", value: "uH" }, { title: "H", value: "H" }];
 const torqueUnits = [{ title: "N·cm", value: "Ncm" }, { title: "kgf·cm", value: "kgfcm" }, { title: "mN·m", value: "mNm" }, { title: "N·m", value: "Nm" }];
 const currentUnits = [{ title: "A", value: "A" }, { title: "mA", value: "mA" }];
+// Datasheets quote rated current as either RMS or peak. The autotune formulas (and the motor database)
+// expect RMS, so a peak rating is scaled by 1/√2. LDO datasheets are RMS; many others quote peak.
+const currentBasisItems = [{ title: "RMS", value: "rms" }, { title: "Peak", value: "peak" }];
 const IND_FACTOR: Record<string, number> = { H: 1, mH: 1e-3, uH: 1e-6 };
 const TORQUE_FACTOR: Record<string, number> = { Nm: 1, Ncm: 0.01, kgfcm: 0.0980665, mNm: 1e-3 };
 const CURRENT_FACTOR: Record<string, number> = { A: 1, mA: 1e-3 };
@@ -326,12 +330,13 @@ const customBase = computed<MotorInput>(() => ({
 	resistance: custom.resistance,
 	inductance: custom.inductance * (IND_FACTOR[customUnits.inductance] ?? 1),
 	holdingTorque: custom.holdingTorque * (TORQUE_FACTOR[customUnits.holdingTorque] ?? 1),
-	maxCurrent: custom.maxCurrent * (CURRENT_FACTOR[customUnits.current] ?? 1),
+	// Convert to RMS (the convention the formulas + database use) when the datasheet quotes peak.
+	maxCurrent: custom.maxCurrent * (CURRENT_FACTOR[customUnits.current] ?? 1) * (customUnits.currentBasis === "peak" ? peakToRms(1) : 1),
 	stepsPerRev: custom.stepsPerRev,
 }));
 const customBaseSummary = computed(() => {
 	const b = customBase.value;
-	return `${b.resistance} Ω · ${(b.inductance * 1000).toFixed(3)} mH · ${b.holdingTorque.toFixed(3)} Nm · ${b.maxCurrent.toFixed(2)} A`;
+	return `${b.resistance} Ω · ${(b.inductance * 1000).toFixed(3)} mH · ${b.holdingTorque.toFixed(3)} Nm · ${b.maxCurrent.toFixed(2)} A RMS`;
 });
 
 const motorItems = computed(() => {
@@ -683,6 +688,7 @@ function editSavedMotor(): void {
 	customUnits.inductance = "mH";
 	customUnits.holdingTorque = "Ncm";
 	customUnits.current = "A";
+	customUnits.currentBasis = "rms"; // stored base current is already RMS
 	custom.resistance = m.resistance;
 	custom.inductance = m.inductance / IND_FACTOR.mH; // H → mH
 	custom.holdingTorque = m.holdingTorque / TORQUE_FACTOR.Ncm; // Nm → N·cm
