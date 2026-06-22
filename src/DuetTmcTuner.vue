@@ -45,7 +45,7 @@
 								<v-col cols="12" md="6">
 									<div class="text-subtitle-2 mb-2">Driver</div>
 									<v-row dense>
-										<v-col cols="6"><v-combobox v-model="driver" :items="driverIdItems" label="Driver (M569.2 P)" :hint="detectedHint" persistent-hint density="compact" variant="outlined" /></v-col>
+										<v-col cols="6"><v-combobox v-model="driver" :items="driverItems" :return-object="false" label="Driver (M569.2 P)" :hint="detectedHint" persistent-hint density="compact" variant="outlined" /></v-col>
 										<v-col cols="6"><v-select v-model="chip" :items="chipItems" label="Driver chip" density="compact" variant="outlined" hide-details /></v-col>
 										<v-col cols="4"><v-text-field v-model.number="volts" type="number" label="Voltage (V)" density="compact" variant="outlined" hide-details class="mt-2" /></v-col>
 										<v-col cols="4"><v-text-field v-model.number="runCurrent" type="number" label="Run current (A peak)" density="compact" variant="outlined" hide-details clearable placeholder="rated" class="mt-2" /></v-col>
@@ -298,7 +298,9 @@ const chip = ref("TMC2209");
 const family = computed(() => familyForChip(chip.value) ?? DRIVER_FAMILIES.tmc22xx);
 // Every physical driver across all boards (main + expansion + toolboards), with its inferred family.
 const detected = computed(() => discoverDrivers(machineStore.model));
-const driverIdItems = computed(() => detected.value.map((d) => d.id));
+// Items carry the discovered label (which leads with the mapped axis, e.g. "X — TMC5160 (0.0)") as the
+// title, but the model value stays the bare M569.2 P id so free-typing a P value still works.
+const driverItems = computed(() => detected.value.map((d) => ({ title: d.label, value: d.id })));
 const driver = ref<string>("0.0");
 // RRF reports peak current; the autotune uses RMS. Surface the conversion so it's never a surprise.
 const currentNote = computed(() => {
@@ -310,8 +312,9 @@ const currentNote = computed(() => {
 const detectedHint = computed(() => {
 	const d = detected.value.find((x) => x.id === driver.value);
 	if (!d) return detected.value.length ? "Not a detected driver — check the P value." : "Connect to auto-detect drivers, or type the M569.2 P value.";
-	if (!d.tuneable) return `${d.chip ?? "External"} on ${d.board} — not tuneable via M569.2.`;
-	return `${d.chip} on ${d.board}${d.assignedTo ? ` (${d.assignedTo})` : ""}`;
+	const axis = d.assignedTo ? `Axis ${d.assignedTo} · ` : "Unassigned · ";
+	if (!d.tuneable) return `${axis}${d.chip ?? "External"} on ${d.board} — not tuneable via M569.2.`;
+	return `${axis}${d.chip} on ${d.board}`;
 });
 const volts = ref<number>(24);
 const runCurrent = ref<number | null>(null);
