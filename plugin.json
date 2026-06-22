@@ -2,7 +2,7 @@
 	"id": "DuetTmcTuner",
 	"name": "Duet TMC Tuner",
 	"author": "James Skitt",
-	"version": "1.0.2",
+	"version": "1.0.3",
 	"license": "GPL-3.0-or-later",
 	"homepage": "https://github.com/jaysuk/duet-tmc-tuner",
 	"dwcVersion": "auto-major",
