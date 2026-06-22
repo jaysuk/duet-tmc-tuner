@@ -1,6 +1,6 @@
 # Duet TMC Tuner — DuetWebControl plugin
 
-Computes quiet **stealthChop** chopper and PWM register values for TMC stepper drivers from a motor's
+Computes quiet **stealthChop** and **Spreadcycle** chopper and PWM register values for TMC stepper drivers from a motor's
 electrical specs, and writes them **directly to the driver registers** using RepRapFirmware's
 `M569.2` — no firmware-specific shortcut codes.
 
