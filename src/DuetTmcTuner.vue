@@ -209,52 +209,14 @@
 					<!-- ── ABOUT ──────────────────────────────────────────── -->
 					<v-tabs-window-item value="about">
 						<v-card-text>
-							<p class="text-body-2 text-medium-emphasis mb-4">
-								Duet TMC Tuner derives spreadCycle chopper (CHOPCONF) and stealthChop (PWMCONF) register
-								values from a motor's datasheet constants (resistance, inductance, holding torque, rated
-								current, steps/rev) and the supply voltage, using the Trinamic datasheet initial-value
-								equations, then writes them straight to the driver registers with <code>M569.2</code>.
-								Built-in database of {{ motorCount }} motors.
-							</p>
-
-							<div class="d-flex align-center mb-1">
-								<div class="text-subtitle-2">Updates</div>
-								<v-spacer />
-								<v-btn size="small" variant="text" :loading="checking" prepend-icon="mdi-refresh" @click="checkNow">Check now</v-btn>
-							</div>
-							<v-alert v-if="pendingReload" type="success" density="comfortable" class="mb-2">
-								<div class="d-flex align-center flex-wrap ga-2">
-									<div class="flex-grow-1">Update installed — reload DWC to finish.</div>
-									<v-btn color="success" prepend-icon="mdi-restart" @click="reloadPage">Reload</v-btn>
-								</div>
-							</v-alert>
-							<v-alert v-else-if="update && update.scenario === 'pluginUpdate'" type="info" density="comfortable" class="mb-2">
-								<div class="d-flex align-center flex-wrap ga-2">
-									<div class="flex-grow-1">
-										<div class="font-weight-medium">Update available: v{{ update.latestVersion }}</div>
-										<div class="text-caption">Installed: v{{ update.currentVersion }}</div>
-									</div>
-									<v-btn color="primary" :loading="applying" :disabled="!isConnected" prepend-icon="mdi-download" @click="updateNow">Update now</v-btn>
-									<v-btn v-if="update.releaseUrl" variant="text" :href="update.releaseUrl" target="_blank" rel="noopener">Release notes</v-btn>
-									<v-btn variant="text" size="small" @click="dismissUpdate">Dismiss</v-btn>
-								</div>
-							</v-alert>
-							<v-alert v-else-if="update && update.scenario === 'dwcUpdate'" type="warning" density="comfortable" class="mb-2">
-								<div class="font-weight-medium">Update available: v{{ update.latestVersion }}</div>
-								<div class="text-caption">Needs DuetWebControl {{ update.requiredDwc }} (you have {{ update.runningDwc }})</div>
-							</v-alert>
-							<v-alert v-else-if="update && update.scenario === 'upToDate'" type="success" density="compact" class="mb-2">
-								Up to date (v{{ update.currentVersion }})
-							</v-alert>
-							<v-switch :model-value="checksEnabled" color="primary" density="compact" hide-details
-									  label="Check for updates on load" @update:model-value="onToggleChecks" />
-
-							<v-divider class="my-4" />
-							<div class="text-subtitle-2 mb-1">Diagnostics</div>
-							<div class="d-flex flex-wrap ga-2">
-								<v-btn variant="tonal" prepend-icon="mdi-download" @click="downloadDiagnostics">Download report</v-btn>
-								<v-btn variant="tonal" prepend-icon="mdi-content-copy" @click="copyDiagnostics">Copy report</v-btn>
-							</div>
+							<AboutPanel plugin-id="DuetTmcTuner" title="Duet TMC Tuner"
+								:description="aboutDescription" :model="machineStore.model"
+								repo="https://github.com/jaysuk/duet-tmc-tuner"
+								:docs-url="DOC.tuning" docs-label="Motor tuning guide"
+								:update-available="update?.updateAvailable ?? false" :latest-version="update?.latestVersion"
+								:checking="checking" :applying="applying" :pending-reload="pendingReload" :auto-check="checksEnabled"
+								:extra-actions="aboutExtraActions"
+								@check-update="checkNow" @apply-update="updateNow" @toggle-auto-check="onToggleChecks" />
 						</v-card-text>
 					</v-tabs-window-item>
 				</v-tabs-window>
@@ -270,7 +232,7 @@ import i18n from "@/i18n";
 import { useMachineStore } from "@/stores/machine";
 import { LogLevel, useUiStore } from "@/stores/ui";
 
-import { buildReport, copyReport, downloadReport, HelpTip } from "dwc-plugin-runtime";
+import { AboutPanel, type AboutExtraAction, buildReport, copyReport, HelpTip } from "dwc-plugin-runtime";
 
 import { computeAutotune, computeThresholds, type AutotuneResult, type MotorInput, type TuningMode } from "./model/autotune";
 import { type AdvancedPlan, buildConfigBlock, buildReadCommands, buildRegisterWrites, type CurrentRegisters } from "./model/apply";
@@ -281,7 +243,7 @@ import { MOTOR_DATABASE, type MotorSpec } from "./model/motorDatabase";
 import { emptyStore, loadStore, parseStore, saveStore, type TunerStore } from "./model/storage";
 import { decodeFields } from "./model/registers";
 import {
-	applying, applyUpdateNow, checking, dismissCurrentUpdate, pendingReload,
+	applying, applyUpdateNow, checking, pendingReload,
 	runUpdateCheck, setUpdateChecksEnabled, updateChecksEnabled, updateState as update,
 } from "./model/updateCheck";
 
@@ -297,7 +259,6 @@ const DOC = {
 	tuning: "https://docs.duet3d.com/en/User_manual/Connecting_hardware/Motors_tuning",
 	stall: "https://docs.duet3d.com/en/User_manual/Connecting_hardware/Sensors_stall_detection",
 };
-const motorCount = MOTOR_DATABASE.length;
 
 // ── Persistent store kept on the printer (custom motors + per-driver assignments) ──────────────
 const SAVED = "__saved__";
@@ -783,14 +744,16 @@ watch([driver, chip], () => { currentRegs.value = {}; });
 const checksEnabled = ref(updateChecksEnabled());
 function checkNow(): void { void runUpdateCheck({ force: true }); }
 function updateNow(): void { void applyUpdateNow(); }
-function dismissUpdate(): void { dismissCurrentUpdate(); }
-function reloadPage(): void { window.location.reload(); }
 function onToggleChecks(value: boolean | null): void {
 	const on = value === true;
 	checksEnabled.value = on;
 	setUpdateChecksEnabled(on);
 	if (on) void runUpdateCheck({ force: true });
 }
+const aboutDescription = "Derives spreadCycle (CHOPCONF) and stealthChop (PWMCONF) register values from a motor's datasheet specs and supply voltage, then writes them straight to the driver with M569.2.";
+const aboutExtraActions = computed<Array<AboutExtraAction>>(() => [
+	{ label: "Copy diagnostic report", icon: "mdi-content-copy", onClick: () => { void copyDiagnostics(); } },
+]);
 function diagnosticReport() {
 	return buildReport({
 		pluginId: PLUGIN_MANIFEST_ID,
@@ -798,7 +761,6 @@ function diagnosticReport() {
 		state: { chip: chip.value, driver: driver.value, volts: volts.value, fclk: fclk.value, motor: motorId.value, writes: writes.value },
 	});
 }
-function downloadDiagnostics(): void { downloadReport(diagnosticReport()); }
 async function copyDiagnostics(): Promise<void> {
 	const ok = await copyReport(diagnosticReport());
 	uiStore.makeNotification(ok ? LogLevel.success : LogLevel.warning, i18n.global.t("plugins.duetTmcTuner.title"),
