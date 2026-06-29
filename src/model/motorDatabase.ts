@@ -22,7 +22,7 @@ export interface MotorSpec {
 	stepsPerRev: number;
 }
 
-/** 201 motors, compiled from manufacturer datasheets. */
+/** 202 motors, compiled from manufacturer datasheets. */
 export const MOTOR_DATABASE: ReadonlyArray<MotorSpec> = [
 	{ id: "bondtech-42H025H-0704A-005", vendor: "Bondtech", resistance: 4.4, inductance: 0.0055, holdingTorque: 0.16, maxCurrent: 0.7, stepsPerRev: 200 },
 	{ id: "bondtech-42h030h-1504a-001", vendor: "Bondtech", resistance: 2.85, inductance: 0.0038, holdingTorque: 0.294, maxCurrent: 1.5, stepsPerRev: 200 },
@@ -35,6 +35,7 @@ export const MOTOR_DATABASE: ReadonlyArray<MotorSpec> = [
 	{ id: "orientalmotor-PKP235D23A", vendor: "Bondtech", resistance: 0.97, inductance: 0.0012, holdingTorque: 0.37, maxCurrent: 2.3, stepsPerRev: 200 },
 	{ id: "orientalmotor-PKP245D15A", vendor: "Bondtech", resistance: 2.4, inductance: 0.0066, holdingTorque: 0.58, maxCurrent: 1.5, stepsPerRev: 200 },
 	{ id: "orientalmotor-PKP245D23A", vendor: "Bondtech", resistance: 1.12, inductance: 0.0029, holdingTorque: 0.58, maxCurrent: 2.3, stepsPerRev: 200 },
+	{ id: "shengyang-36byg1204-a-6qht", vendor: "Bondtech", resistance: 2.4, inductance: 0.0013, holdingTorque: 0.095, maxCurrent: 1, stepsPerRev: 200 },
 	{ id: "bozu-42SHDC3025-24B", vendor: "Bozu", resistance: 4.4, inductance: 0.00697, holdingTorque: 0.4, maxCurrent: 0.9, stepsPerRev: 200 },
 	{ id: "BJ42D09-20V02", vendor: "Creality", resistance: 1.75, inductance: 0.003, holdingTorque: 0.15, maxCurrent: 0.84, stepsPerRev: 200 },
 	{ id: "BJ42D22-23V01", vendor: "Creality", resistance: 2.8, inductance: 0.0069, holdingTorque: 0.37, maxCurrent: 1, stepsPerRev: 200 },
