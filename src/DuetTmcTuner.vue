@@ -750,7 +750,8 @@ function onToggleChecks(value: boolean | null): void {
 	setUpdateChecksEnabled(on);
 	if (on) void runUpdateCheck({ force: true });
 }
-const aboutDescription = "Derives spreadCycle (CHOPCONF) and stealthChop (PWMCONF) register values from a motor's datasheet specs and supply voltage, then writes them straight to the driver with M569.2.";
+// Count comes from the bundled MOTOR_DATABASE, so it tracks the upstream sync automatically on each build.
+const aboutDescription = computed(() => `Derives spreadCycle (CHOPCONF) and stealthChop (PWMCONF) register values from a motor's datasheet specs and supply voltage, then writes them straight to the driver with M569.2. Built-in database of ${MOTOR_DATABASE.length} motors.`);
 const aboutExtraActions = computed<Array<AboutExtraAction>>(() => [
 	{ label: "Copy diagnostic report", icon: "mdi-content-copy", onClick: () => { void copyDiagnostics(); } },
 ]);
