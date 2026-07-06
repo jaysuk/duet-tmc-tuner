@@ -26,6 +26,14 @@ const VENDOR_TIDY = {
 	"OMC Stepperonline": "StepperOnline",
 };
 
+// Known-bad values in the upstream source, patched here (by motor id) so they don't feed garbage into
+// the autotune maths and so a re-sync doesn't reintroduce them until upstream fixes it.
+const CORRECTIONS = {
+	// Upstream lists holding_torque: 107.7 Nm (~180x every other NEMA17 in the list). Corrected to match
+	// its "(prusa-z)" sibling entry, which is the same physical motor. See andrewmcgr/klipper_tmc_autotune.
+	"ldo-42sth34-1004l321e": { holdingTorque: 0.59 },
+};
+
 function parse(cfg) {
 	let vendor = "";
 	const entries = [];
@@ -52,7 +60,7 @@ function parse(cfg) {
 		const r = e.resistance, l = e.inductance, t = e.holding_torque, i = e.max_current;
 		const st = e.steps_per_revolution ?? 200;
 		if ([r, l, t, i].some((v) => v == null || !Number.isFinite(v))) continue;
-		motors.push({ id: e.id, vendor: e.vendor || "Other", resistance: r, inductance: l, holdingTorque: t, maxCurrent: i, stepsPerRev: Math.round(st) });
+		motors.push({ id: e.id, vendor: e.vendor || "Other", resistance: r, inductance: l, holdingTorque: t, maxCurrent: i, stepsPerRev: Math.round(st), ...CORRECTIONS[e.id] });
 	}
 	// Sort by manufacturer, then naturally by id (alphabetical + 0-9) within each manufacturer.
 	motors.sort((a, b) => a.vendor.localeCompare(b.vendor, undefined, { sensitivity: "base" })

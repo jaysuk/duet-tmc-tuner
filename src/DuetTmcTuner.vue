@@ -110,8 +110,16 @@
 													{{ chip }} has no CoolStep / StallGuard.
 												</v-alert>
 												<template v-else>
-													<v-switch v-model="coolStep" color="primary" density="compact" hide-details label="CoolStep (dynamic current)" />
-													<v-switch v-model="stallGuard" color="primary" density="compact" hide-details label="StallGuard (sensorless)" />
+													<v-switch v-model="coolStep" color="primary" density="compact" hide-details>
+														<template #label>CoolStep (dynamic current)
+															<HelpTip text="Automatically lowers run current when the motor is not near stalling, and raises it back under load. Writes TCOOLTHRS + COOLCONF." :href="DOC.stall" />
+														</template>
+													</v-switch>
+													<v-switch v-model="stallGuard" color="primary" density="compact" hide-details>
+														<template #label>StallGuard (sensorless)
+															<HelpTip text="Sensorless-homing stall detection. Writes the StallGuard threshold (SGTHRS on 2209/2226, SGT-in-COOLCONF on 5160/2240) and shares TCOOLTHRS with CoolStep." :href="DOC.stall" />
+														</template>
+													</v-switch>
 													<v-text-field v-if="stallGuard" v-model.number="sgValue" type="number" :min="sgRange.min" :max="sgRange.max"
 														              density="compact" variant="outlined" hide-details class="mt-2" :label="sgRange.label">
 															<template #append-inner><HelpTip text="StallGuard threshold. Higher = less sensitive. Affects sensorless homing and usually needs tuning per machine." :href="DOC.stall" /></template>

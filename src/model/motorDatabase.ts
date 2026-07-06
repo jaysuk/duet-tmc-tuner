@@ -92,7 +92,7 @@ export const MOTOR_DATABASE: ReadonlyArray<MotorSpec> = [
 	{ id: "ldo-42sth25-1404ac", vendor: "LDO", resistance: 2.4, inductance: 0.0055, holdingTorque: 0.23, maxCurrent: 1.4, stepsPerRev: 200 },
 	{ id: "ldo-42sth25-1404mac", vendor: "LDO", resistance: 2.4, inductance: 0.0055, holdingTorque: 0.2, maxCurrent: 1.4, stepsPerRev: 400 },
 	{ id: "ldo-42sth25-1404mah", vendor: "LDO", resistance: 2.4, inductance: 0.0055, holdingTorque: 0.18, maxCurrent: 1.4, stepsPerRev: 400 },
-	{ id: "ldo-42sth34-1004l321e", vendor: "LDO", resistance: 8, inductance: 0.0095, holdingTorque: 107.7, maxCurrent: 1, stepsPerRev: 200 },
+	{ id: "ldo-42sth34-1004l321e", vendor: "LDO", resistance: 8, inductance: 0.0095, holdingTorque: 0.59, maxCurrent: 1, stepsPerRev: 200 },
 	{ id: "ldo-42sth34-1004l321e(prusa-z)", vendor: "LDO", resistance: 8, inductance: 0.0095, holdingTorque: 0.59, maxCurrent: 1, stepsPerRev: 200 },
 	{ id: "ldo-42sth34-1334ac", vendor: "LDO", resistance: 2, inductance: 0.0034, holdingTorque: 0.22, maxCurrent: 1.33, stepsPerRev: 200 },
 	{ id: "ldo-42sth34-1504mac", vendor: "LDO", resistance: 1.5, inductance: 0.003, holdingTorque: 0.2, maxCurrent: 1.5, stepsPerRev: 400 },
