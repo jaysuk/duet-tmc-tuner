@@ -22,12 +22,13 @@ export interface MotorSpec {
 	stepsPerRev: number;
 }
 
-/** 202 motors, compiled from manufacturer datasheets. */
+/** 203 motors, compiled from manufacturer datasheets. */
 export const MOTOR_DATABASE: ReadonlyArray<MotorSpec> = [
 	{ id: "bondtech-42H025H-0704A-005", vendor: "Bondtech", resistance: 4.4, inductance: 0.0055, holdingTorque: 0.16, maxCurrent: 0.7, stepsPerRev: 200 },
 	{ id: "bondtech-42h030h-1504a-001", vendor: "Bondtech", resistance: 2.85, inductance: 0.0038, holdingTorque: 0.294, maxCurrent: 1.5, stepsPerRev: 200 },
 	{ id: "bondtech-acc01stm41280", vendor: "Bondtech", resistance: 2.37, inductance: 0.0012, holdingTorque: 0.09, maxCurrent: 1, stepsPerRev: 200 },
 	{ id: "bondtech-acc04stm41213", vendor: "Bondtech", resistance: 2.1, inductance: 0.0015, holdingTorque: 0.09, maxCurrent: 1, stepsPerRev: 200 },
+	{ id: "flsun-42bygh718-b-27hqt", vendor: "Bondtech", resistance: 1.7, inductance: 0.0042, holdingTorque: 0.42, maxCurrent: 1.5, stepsPerRev: 200 },
 	{ id: "flsun-v400-36", vendor: "Bondtech", resistance: 13, inductance: 0.01, holdingTorque: 0.12, maxCurrent: 0.5, stepsPerRev: 200 },
 	{ id: "flsun-v400-42", vendor: "Bondtech", resistance: 18, inductance: 0.023, holdingTorque: 0.284, maxCurrent: 0.5, stepsPerRev: 200 },
 	{ id: "honeybadger-42hs48-25044a", vendor: "Bondtech", resistance: 1.6, inductance: 0.0018, holdingTorque: 0.49, maxCurrent: 2.5, stepsPerRev: 200 },
