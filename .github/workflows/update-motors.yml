@@ -24,6 +24,15 @@ jobs:
       - name: Regenerate motor database from upstream
         run: node scripts/update-motors.mjs
 
+      # The PR below is authored by GITHUB_TOKEN, and GitHub deliberately does not start workflow runs
+      # for such events — so ci.yml never fires on it and the PR lands with no checks. Run the unit
+      # suite here instead, so a database that breaks the autotune maths blocks the PR at source.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test the regenerated database
+        run: npm test
+
       - name: Open a PR if the database changed
         uses: peter-evans/create-pull-request@v7
         with:
@@ -33,6 +42,10 @@ jobs:
           body: |
             Automated sync of `src/model/motorDatabase.ts` from the upstream community motor list
             (run by `.github/workflows/update-motors.yml`). Review the diff for new/changed motors,
-            then merge. CI will type-check and test the regenerated database.
+            then merge.
+
+            The unit suite ran against the regenerated database in the sync job before this PR was
+            opened. GitHub does not start workflow runs for PRs authored by `GITHUB_TOKEN`, so the
+            checks list here stays empty — that is expected, not a skipped test run.
           labels: motors, automated
           delete-branch: true

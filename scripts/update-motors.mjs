@@ -24,7 +24,41 @@ const VENDOR_TIDY = {
 	"Trinamic (yes, they also make stepper motors)": "Trinamic",
 	"Guangzhou Bozu Digital Technology": "Bozu",
 	"OMC Stepperonline": "StepperOnline",
+	"Other manufacturers": "Other",
 };
+
+// Canonical manufacturer per motor-id prefix. Upstream's "### Vendor ###" section headings are a loose
+// filing system, not per-motor truth: contributors append new motors to whatever section is nearest, and
+// rebadged motors are filed under the *original* maker (e.g. Bondtech-branded LDO motors sit under LDO).
+// The id prefix is the brand actually printed on the motor the user bought, so it wins for the picker's
+// vendor filter; anything not listed here falls back to the section heading. Keyed by the id's leading
+// "-"-delimited token, lowercased. Part-number prefixes (23hs30-, bj42d22-, tb-) are deliberately absent
+// so they keep their section's vendor instead of becoming a nonsense label.
+const VENDOR_BY_PREFIX = {
+	act: "ACT", biqu: "BIQU", bondtech: "Bondtech", bozu: "Bozu", btt: "BTT",
+	cloudray: "Cloudray", creality: "Creality", damencnc: "DamenCNC", dfh: "DFH",
+	flsun: "FLSun", fysetc: "FYSETC", geetech: "Geeetech", hanpose: "Hanpose",
+	honeybadger: "Honey Badger", jinkong: "JKong", jkong: "JKong", kelimotor: "Keli Motor",
+	kingroon: "Kingroon", ldo: "LDO", leadshine: "Leadshine", leisai: "Leadshine",
+	lkd: "LKD", longs: "Longs Motor", mercury: "Mercury", monoprice: "Monoprice",
+	moons: "Moons", motech: "Motech", motionking: "MotionKing", omc: "StepperOnline",
+	orientalmotor: "Oriental Motor", oukeda: "Oukeda", qidi: "QIDI", rattm: "RATTM",
+	rbmotor: "RB Motor", shengyang: "Shengyang", siboor: "Siboor", th3d: "TH3D",
+	tmc: "Trinamic", toa: "TOA", trianglelab: "Trianglelab", tronxy: "Tronxy",
+	usongshine: "Usongshine", wantai: "Wantai", zyltech: "Zyltech",
+};
+
+// Canonical spelling for every label we know, so a section-heading fallback cannot introduce a
+// case-variant duplicate of a prefix-derived vendor ("Fysetc" alongside "FYSETC" splits the picker).
+const CANONICAL_VENDOR = new Map(Object.values(VENDOR_BY_PREFIX).map((v) => [v.toLowerCase(), v]));
+
+/** Manufacturer for the picker: id prefix if we recognise it, else the enclosing section heading. */
+function vendorFor(id, sectionVendor) {
+	const byPrefix = VENDOR_BY_PREFIX[id.split("-")[0].toLowerCase()];
+	if (byPrefix) return byPrefix;
+	const section = VENDOR_TIDY[sectionVendor] ?? sectionVendor ?? "Other";
+	return CANONICAL_VENDOR.get(section.toLowerCase()) ?? section;
+}
 
 // Known-bad values in the upstream source, patched here (by motor id) so they don't feed garbage into
 // the autotune maths and so a re-sync doesn't reintroduce them until upstream fixes it.
@@ -42,13 +76,15 @@ function parse(cfg) {
 	for (const raw of cfg.split(/\r?\n/)) {
 		const s = raw.trim();
 		if (s.startsWith("###")) {
-			const m = s.match(/^#+\s*(.+?)\s*#+\s*$/);
+			// Trailing hashes are optional: upstream writes "### Other manufacturers" without them, and
+			// requiring them silently left the previous section's vendor in place for everything below.
+			const m = s.match(/^#+\s*(.+?)\s*#*\s*$/);
 			vendor = m ? m[1].replace(/\s*Motors?$/i, "").trim() : vendor;
 			continue;
 		}
 		if (s.startsWith("##")) continue;
 		const head = s.match(/^\[motor_constants\s+(.+?)\]\s*$/);
-		if (head) { flush(); cur = { id: head[1].trim(), vendor: VENDOR_TIDY[vendor] ?? vendor ?? "Other" }; continue; }
+		if (head) { flush(); cur = { id: head[1].trim(), sectionVendor: vendor }; continue; }
 		if (cur) {
 			const kv = s.match(/^([a-z_]+)\s*:\s*([-+0-9.eE]+)/);
 			if (kv) cur[kv[1]] = Number(kv[2]);
@@ -60,7 +96,7 @@ function parse(cfg) {
 		const r = e.resistance, l = e.inductance, t = e.holding_torque, i = e.max_current;
 		const st = e.steps_per_revolution ?? 200;
 		if ([r, l, t, i].some((v) => v == null || !Number.isFinite(v))) continue;
-		motors.push({ id: e.id, vendor: e.vendor || "Other", resistance: r, inductance: l, holdingTorque: t, maxCurrent: i, stepsPerRev: Math.round(st), ...CORRECTIONS[e.id] });
+		motors.push({ id: e.id, vendor: vendorFor(e.id, e.sectionVendor), resistance: r, inductance: l, holdingTorque: t, maxCurrent: i, stepsPerRev: Math.round(st), ...CORRECTIONS[e.id] });
 	}
 	// Sort by manufacturer, then naturally by id (alphabetical + 0-9) within each manufacturer.
 	motors.sort((a, b) => a.vendor.localeCompare(b.vendor, undefined, { sensitivity: "base" })
@@ -112,6 +148,15 @@ const motors = parse(await res.text());
 if (motors.length < 150) {
 	console.error(`Refusing to write: only parsed ${motors.length} motors (source format may have changed).`);
 	process.exit(2);
+}
+
+// Surface motors whose vendor came from the section heading rather than a recognised id prefix. Upstream
+// adding a new brand shows up here, so VENDOR_BY_PREFIX can be extended instead of quietly shipping a
+// motor filed under whichever vendor happened to precede it.
+const unrecognised = motors.filter((m) => !VENDOR_BY_PREFIX[m.id.split("-")[0].toLowerCase()]);
+if (unrecognised.length) {
+	console.log(`${unrecognised.length} motor(s) fell back to their section heading for vendor:`);
+	for (const m of unrecognised) console.log(`  ${m.id} -> ${m.vendor}`);
 }
 const next = render(motors);
 const current = (() => { try { return readFileSync(OUT, "utf8"); } catch { return ""; } })();

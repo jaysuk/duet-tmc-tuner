@@ -17,16 +17,16 @@
     "update-motors": "node scripts/update-motors.mjs"
   },
   "dependencies": {
-    "dwc-plugin-runtime": "github:jaysuk/dwc-plugin-runtime#v0.8.3"
+    "dwc-plugin-runtime": "^0.8.8"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^5.2.4",
-    "@vitest/coverage-v8": "^4.1.8",
-    "@vue/test-utils": "^2.4.6",
-    "dwc-plugin-test-kit": "github:jaysuk/dwc-plugin-test-kit#v0.2.4",
-    "happy-dom": "^20.10.6",
-    "vitest": "^4.1.8",
-    "vue": "^3.5.30",
-    "vuetify": "^4.1.0"
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vitest/coverage-v8": "^4.1.11",
+    "@vue/test-utils": "^2.5.0",
+    "dwc-plugin-test-kit": "^0.2.8",
+    "happy-dom": "^20.12.2",
+    "vitest": "^4.1.11",
+    "vue": "^3.5.42",
+    "vuetify": "^4.2.0"
   }
 }
