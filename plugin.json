@@ -6,6 +6,7 @@
 	"license": "GPL-3.0-or-later",
 	"homepage": "https://github.com/jaysuk/duet-tmc-tuner",
 	"dwcVersion": "auto-major",
+	"rrfVersion": "3.7",
 	"tags": [
 		"tmc",
 		"stepper",

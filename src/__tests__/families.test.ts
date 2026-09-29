@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { computeAutotune, computeThresholds } from "../model/autotune";
-import { buildRegisterWrites } from "../model/apply";
+import { buildConfigBlock, buildRegisterWrites } from "../model/apply";
 import { DRIVER_FAMILIES, familyForChip, supportedFamilies } from "../model/drivers";
 
 const TEST_MOTOR = { resistance: 1.5, inductance: 0.0015, holdingTorque: 0.45, maxCurrent: 2, stepsPerRev: 200 };
@@ -39,6 +39,49 @@ describe("driver families", () => {
 		// TOFF in bits 0..3 should equal the computed toff (default 3).
 		expect(chop.word & 0xF).toBe(r.chopconf.toff);
 		expect(chop.command).toMatch(/^M569\.2 P0\.0 R108 V\d+$/);
+	});
+
+	it("M569 C carries only the CHOPCONF bits RRF lets the user set, per family", () => {
+		const r = computeAutotune(TEST_MOTOR, { volts: 24, fclk: 12_000_000 });
+		// A live CHOPCONF full of RRF-managed bits (MRES, INTPOL, VSENSE, TPFD, FD3, DISFDCC, CHM).
+		const live = 0x14FFFFFF;
+		const c = (fam: keyof typeof DRIVER_FAMILIES) => {
+			const w = buildRegisterWrites(DRIVER_FAMILIES[fam], "0.0", r, { chopconf: live }).find((x) => x.register === "CHOPCONF")!;
+			return Number(w.chopperCommand!.match(/C(\d+)$/)![1]);
+		};
+		// 22xx: TOFF/HSTRT/HEND/TBL only -> no TPFD/FD3/DISFDCC/VSENSE/MRES leak through.
+		expect(c("tmc22xx") & ~0x187FF).toBe(0);
+		// 2160/5160/2240 additionally allow FD3 (bit 11), DISFDCC (bit 12) and TPFD (bits 20-23), never CHM/MRES/INTPOL.
+		for (const fam of ["tmc5160", "tmc2240"] as const) {
+			expect(c(fam) & ~0xF19FFF).toBe(0);
+			expect(c(fam) & 0xF01800).toBe(0xF01800);
+		}
+	});
+
+	it("config.g block uses M569 C for CHOPCONF and M569.2 for the rest", () => {
+		const r = computeAutotune(TEST_MOTOR, { volts: 24, fclk: 12_000_000 });
+		const block = buildConfigBlock(buildRegisterWrites(DRIVER_FAMILIES.tmc2240, "121.0", r, {}), { driver: "121.0", chip: "TMC2240", volts: 24 });
+		expect(block).toMatch(/^M569 P121\.0 C\d+ +; CHOPCONF/m);
+		expect(block).toMatch(/^M569\.2 P121\.0 R112 V\d+ +; PWMCONF/m);
+		expect(block).not.toMatch(/M569\.2 P121\.0 R108/);
+	});
+
+	it("TPFD/FD3/DISFDCC overrides apply on the SPI families, keep-current when null, and are ignored on 22xx", () => {
+		const r = computeAutotune(TEST_MOTOR, { volts: 24, fclk: 12_000_000 });
+		const live = 0x00A00000; // TPFD = 0xA
+		const chop = (fam: keyof typeof DRIVER_FAMILIES, extras: object, cur = live) =>
+			buildRegisterWrites(DRIVER_FAMILIES[fam], "0.0", r, { chopconf: cur }, undefined, undefined, extras).find((w) => w.register === "CHOPCONF")!;
+		const w = chop("tmc2240", { tpfd: 7, fd3: 1, disfdcc: 1 });
+		expect((w.word >>> 20) & 0xF).toBe(7);
+		expect((w.word >>> 11) & 1).toBe(1);
+		expect((w.word >>> 12) & 1).toBe(1);
+		expect(w.chopperCommand).toContain(` C${w.word & 0xF19FFF}`);
+		// null = keep the live value
+		expect((chop("tmc5160", { tpfd: null, fd3: null, disfdcc: null }).word >>> 20) & 0xF).toBe(0xA);
+		// 22xx has no such user bits: a stray override must not touch the word or C
+		const w22 = chop("tmc22xx", { tpfd: 7, fd3: 1, disfdcc: 1 });
+		expect(w22.word).toBe(chop("tmc22xx", {}).word);
+		expect(w22.chopperCommand).toBe(chop("tmc22xx", {}).chopperCommand);
 	});
 
 	it("chopperOnly writes only CHOPCONF + PWMCONF", () => {

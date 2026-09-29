@@ -9,7 +9,7 @@
  */
 import { type AutotuneResult, type ThresholdResult, tstepFromRevsPerSec } from "./autotune";
 import type { DriverFamily } from "./drivers";
-import { applyFields, encodeFields, toM569_2Read, toM569_2Write } from "./registers";
+import { applyFields, encodeFields, fieldsMask, toM569_2Read, toM569_2Write, toM569CWrite } from "./registers";
 
 /** Klipper's CoolStep defaults (COOLCONF fields). */
 export const COOLSTEP_DEFAULTS = { semin: 2, semax: 4, seup: 3, sedn: 2, seimin: 1 } as const;
@@ -29,6 +29,19 @@ export interface AdvancedPlan {
 	coolStepFields?: Partial<typeof COOLSTEP_DEFAULTS>;
 }
 
+/**
+ * Optional CHOPCONF bits set through `M569 C` (RRF 3.7.0-rc.2+; TMC2160/5160/2240 only). `null`/absent
+ * keeps whatever the driver currently holds; families without the field ignore it.
+ */
+export interface ChopperExtras {
+	/** Passive fast decay time, 0–15 (TPFD) — damps mid-range resonance. */
+	tpfd?: number | null;
+	/** MSB of the fast decay time (FD3), 0/1. */
+	fd3?: number | null;
+	/** Disable current-comparator termination of fast decay (DISFDCC), 0/1. */
+	disfdcc?: number | null;
+}
+
 export interface RegisterWrite {
 	/** Register name, e.g. "CHOPCONF". */
 	register: string;
@@ -38,6 +51,12 @@ export interface RegisterWrite {
 	word: number;
 	/** The ready-to-send `M569.2` command. */
 	command: string;
+	/**
+	 * CHOPCONF only: the equivalent persistent `M569 P<d> C<n>` command (what Apply now and config.g send).
+	 * RRF keeps its own copy of the user-settable chopper bits and rewrites CHOPCONF from it, so this
+	 * survives M350/M569 D changes where a raw `M569.2` write would be overwritten.
+	 */
+	chopperCommand?: string;
 }
 
 /** Live register words read back from the board, keyed by register name we care about. */
@@ -66,15 +85,26 @@ export function buildRegisterWrites(
 	current: CurrentRegisters = {},
 	thresholds?: ThresholdResult,
 	advanced?: AdvancedPlan,
+	extras?: ChopperExtras,
 ): Array<RegisterWrite> {
 	const chop = family.registers.chopconf;
 	const pwm = family.registers.pwmconf;
 
-	const chopWord = applyFields(chop, current.chopconf ?? 0, result.chopconf);
+	const chopFields: Record<string, number> = { ...result.chopconf };
+	for (const [name, value] of Object.entries(extras ?? {})) {
+		if (value !== null && value !== undefined && family.chopperUserFields.includes(name)) {
+			chopFields[name] = value;
+		}
+	}
+	const chopWord = applyFields(chop, current.chopconf ?? 0, chopFields);
 	const pwmWord = applyFields(pwm, current.pwmconf ?? 0, result.pwmconf as unknown as Record<string, number>);
 
+	const chopperWord = chopWord & fieldsMask(chop, family.chopperUserFields);
 	const writes: Array<RegisterWrite> = [
-		{ register: chop.name, address: chop.address, word: chopWord, command: toM569_2Write(driver, chop, chopWord) },
+		{
+			register: chop.name, address: chop.address, word: chopWord, command: toM569_2Write(driver, chop, chopWord),
+			chopperCommand: toM569CWrite(driver, chopperWord),
+		},
 		{ register: pwm.name, address: pwm.address, word: pwmWord, command: toM569_2Write(driver, pwm, pwmWord) },
 	];
 	const push = (reg: typeof chop, word: number) =>
@@ -124,7 +154,8 @@ export function buildConfigBlock(
 	const lines = [
 		`; Duet TMC Tuner — driver ${meta.driver} (${meta.chip})${meta.motor ? `, ${meta.motor}` : ""}, ${meta.volts} V`,
 		"; Apply after the driver's M569 / M906 / microstepping setup.",
-		...writes.map((w) => `${w.command}    ; ${w.register} = 0x${(w.word >>> 0).toString(16).toUpperCase().padStart(8, "0")}`),
+		// CHOPCONF goes through M569 C: RRF retains it, so later M350 / M569 D changes keep the tuning (RRF 3.7.0-rc.2+).
+		...writes.map((w) => `${w.chopperCommand ?? w.command}    ; ${w.register} = 0x${(w.word >>> 0).toString(16).toUpperCase().padStart(8, "0")}`),
 	];
 	return lines.join("\n");
 }

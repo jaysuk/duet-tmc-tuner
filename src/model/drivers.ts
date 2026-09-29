@@ -33,6 +33,11 @@ export interface DriverFamily {
 	blankCycles: readonly [number, number, number, number];
 	/** CHOPCONF + PWMCONF (the two registers the chopper/PWM autotune writes). */
 	registers: { chopconf: RegisterDef; pwmconf: RegisterDef };
+	/**
+	 * CHOPCONF fields RRF lets the user set through `M569 C` (it masks everything else and manages those
+	 * bits itself). 22xx: TOFF/HSTRT/HEND/TBL; 2160/5160/2240 also TPFD/FD3/DISFDCC (RRF 3.7.0-rc.2+).
+	 */
+	chopperUserFields: ReadonlyArray<string>;
 	/** TPWMTHRS (stealthChop↔spreadCycle switch). Single 20-bit value in field `value`. */
 	tpwmthrs: RegisterDef;
 	/** THIGH (→ fullstep) — only the SPI families have it; null otherwise. */
@@ -131,8 +136,9 @@ const sharedPwmconf: RegisterDef = {
 
 // ── TMC2160 / 5160 / 2240 (SPI) — CHOPCONF 0x6C ─────────────────────────────────────────────────
 // TOFF/HSTRT/HEND/TBL/MRES sit at the SAME positions as the 22xx family, so the autotuned fields pack
-// identically. The differences are CHM (bit 14) and TPFD (bits 20–23) instead of 22xx's VSENSE; the
-// tuner leaves CHM/TPFD untouched (read-modify-write) — they're declared for accurate read-back.
+// identically. The differences are CHM (bit 14), FD3/DISFDCC (bits 11/12) and TPFD (bits 20–23) instead of
+// 22xx's VSENSE. The tuner leaves them untouched (read-modify-write); RRF 3.7.0-rc.2+ lets the user set
+// FD3/DISFDCC/TPFD through `M569 C`, so they're declared for read-back and for the `M569 C` word.
 const tmc51xxChopconf: RegisterDef = {
 	name: "CHOPCONF",
 	address: 0x6C, // 108
@@ -140,6 +146,8 @@ const tmc51xxChopconf: RegisterDef = {
 		toff: { bit: 0, width: 4 },
 		hstrt: { bit: 4, width: 3, offset: -1 },
 		hend: { bit: 7, width: 4, offset: 3 },
+		fd3: { bit: 11, width: 1 }, // MSB of the fast-decay time TFD (TFD[2:0] share HSTRT's bits in chopper mode 1)
+		disfdcc: { bit: 12, width: 1 }, // disable current-comparator termination of fast decay (CHM = 1)
 		chm: { bit: 14, width: 1 },
 		tbl: { bit: 15, width: 2 },
 		tpfd: { bit: 20, width: 4 },
@@ -161,6 +169,7 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		pwmFreqTarget: 55_000,
 		blankCycles: [16, 24, 32, 40],
 		registers: { chopconf: tmc22xxChopconf, pwmconf: sharedPwmconf },
+		chopperUserFields: ["toff", "hstrt", "hend", "tbl"],
 		tpwmthrs: reg20("TPWMTHRS", 0x13),
 		thigh: null, // 22xx has no THIGH register
 		hasSg4: true, // 2209 has SG4 (2208 doesn't, but the family default suits the common 2209)
@@ -178,6 +187,7 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		pwmFreqTarget: 20_000, // 5160s run hot at high PWM frequency
 		blankCycles: [16, 24, 36, 54],
 		registers: { chopconf: tmc51xxChopconf, pwmconf: sharedPwmconf },
+		chopperUserFields: ["toff", "hstrt", "hend", "tbl", "fd3", "disfdcc", "tpfd"],
 		tpwmthrs: reg20("TPWMTHRS", 0x13),
 		thigh: reg20("THIGH", 0x15),
 		hasSg4: false, // 5160 uses SGT, not an SG4 threshold register
@@ -195,6 +205,7 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		pwmFreqTarget: 20_000,
 		blankCycles: [16, 24, 36, 54],
 		registers: { chopconf: tmc51xxChopconf, pwmconf: sharedPwmconf },
+		chopperUserFields: ["toff", "hstrt", "hend", "tbl", "fd3", "disfdcc", "tpfd"],
 		tpwmthrs: reg20("TPWMTHRS", 0x13),
 		thigh: reg20("THIGH", 0x15),
 		hasSg4: true,

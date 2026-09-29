@@ -85,3 +85,21 @@ export function toM569_2Write(driver: string | number, def: RegisterDef, word: n
 export function toM569_2Read(driver: string | number, def: RegisterDef): string {
 	return `M569.2 P${driver} R${def.address}`;
 }
+
+/** Combined bit mask of the named fields of a register (e.g. the CHOPCONF bits RRF lets `M569 C` set). */
+export function fieldsMask(def: RegisterDef, names: ReadonlyArray<string>): number {
+	let m = 0n;
+	for (const name of names) {
+		const f = def.fields[name];
+		if (!f) {
+			throw new Error(`Unknown field "${name}" for register ${def.name}`);
+		}
+		m |= mask(f);
+	}
+	return Number(m & U32);
+}
+
+/** Format an `M569` chopper-control write (RRF stores it and re-applies it whenever it reprograms CHOPCONF). */
+export function toM569CWrite(driver: string | number, word: number): string {
+	return `M569 P${driver} C${word >>> 0}`;
+}

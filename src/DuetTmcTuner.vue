@@ -98,6 +98,11 @@
 													<v-col cols="3"><v-text-field v-model.number="extraHysteresis" type="number" label="Extra hyst." density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="Extra chopper hysteresis (0–8) added on top of the computed value to reduce audible motor hum." :href="DOC.tuning" /></template></v-text-field></v-col>
 													<v-col cols="3"><v-text-field v-model.number="pwmFreqTargetHz" type="number" label="PWM Hz" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="Target stealthChop PWM frequency. The highest chip setting at or below this is used (55 kHz for 22xx, 20 kHz for 5160/2240)." :href="DOC.tuning" /></template></v-text-field></v-col>
 												</v-row>
+												<v-row v-if="hasChopperExtras" dense class="mt-2">
+													<v-col cols="4"><v-text-field v-model.number="tpfd" type="number" :min="0" :max="15" clearable placeholder="keep" label="TPFD (0–15)" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="Passive fast decay time (CHOPCONF TPFD). Raise it to damp mid-range motor resonance. Blank keeps the driver's current value. Set via M569 C — needs RRF 3.7.0-rc.2 or later." :href="DOC.gcodes" /></template></v-text-field></v-col>
+													<v-col cols="4"><v-select v-model="fd3" :items="keepBitItems" label="FD3" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="MSB of the fast decay time TFD (CHOPCONF FD3, bit 11). Keep = leave the driver's current value. Set via M569 C (RRF 3.7.0-rc.2+)." :href="DOC.gcodes" /></template></v-select></v-col>
+													<v-col cols="4"><v-select v-model="disfdcc" :items="keepBitItems" label="DISFDCC" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="Disables current-comparator termination of fast decay (CHOPCONF DISFDCC, bit 12; only used in fixed off-time chopper mode). Keep = leave the driver's current value. Set via M569 C (RRF 3.7.0-rc.2+)." :href="DOC.gcodes" /></template></v-select></v-col>
+												</v-row>
 												<v-row dense class="mt-2">
 													<v-col cols="7"><v-select v-model="hysteresisBasis" :items="hysteresisBasisItems" label="Hysteresis basis" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="RMS = Klipper/validated default. Peak = Trinamic calculation-sheet exact (uses the peak coil current and the CS+1 current-scale factor)." :href="DOC.tuning" /></template></v-select></v-col>
 													<v-col v-if="hysteresisBasis === 'peak'" cols="5"><v-text-field v-model.number="currentScaleCs" type="number" :min="0" :max="31" label="Current scale CS (0–31)" density="compact" variant="outlined" hide-details><template #append-inner><HelpTip text="TMC current-scale (CS) the driver runs at; 31 = full scale. Only used by the Trinamic (peak) hysteresis basis." :href="DOC.tuning" /></template></v-text-field></v-col>
@@ -159,14 +164,14 @@
 
 								<v-table density="compact" class="reg-table mb-3">
 									<thead>
-										<tr><th>Register</th><th>Key fields</th><th>Word</th><th>M569.2</th></tr>
+										<tr><th>Register</th><th>Key fields</th><th>Word</th><th>Command</th></tr>
 									</thead>
 									<tbody>
 										<tr v-for="w in writes" :key="w.register">
 											<td class="font-weight-medium">{{ w.register }}</td>
 											<td>{{ fieldSummary(w.register) }}</td>
 											<td><code>0x{{ hex(w.word) }}</code></td>
-											<td><code>{{ w.command }}</code></td>
+											<td><code>{{ w.chopperCommand ?? w.command }}</code></td>
 										</tr>
 									</tbody>
 								</v-table>
@@ -243,7 +248,7 @@ import { LogLevel, useUiStore } from "@/stores/ui";
 import { AboutPanel, type AboutExtraAction, buildReport, copyReport, HelpTip } from "dwc-plugin-runtime";
 
 import { computeAutotune, computeThresholds, type AutotuneResult, type MotorInput, type TuningMode } from "./model/autotune";
-import { type AdvancedPlan, buildConfigBlock, buildReadCommands, buildRegisterWrites, type CurrentRegisters } from "./model/apply";
+import { type AdvancedPlan, buildConfigBlock, type ChopperExtras, buildReadCommands, buildRegisterWrites, type CurrentRegisters } from "./model/apply";
 import { DRIVER_FAMILIES, familyForChip, supportedFamilies, supportsCoolStep } from "./model/drivers";
 import { LS_STATE, PLUGIN_MANIFEST_ID } from "./model/constants";
 import { chipFromIoin, discoverDrivers, IOIN_ADDRESSES, parseRegisterValue, peakToRms, readRunCurrent, readVin } from "./model/machine";
@@ -377,6 +382,17 @@ const fclk = ref<number>(DRIVER_FAMILIES.tmc22xx.fclk);
 const toff = ref<number>(3);
 const tbl = ref<number>(1);
 const extraHysteresis = ref<number>(0);
+// CHOPCONF bits settable through `M569 C` on the SPI families (RRF 3.7.0-rc.2+); null = keep the live value.
+const tpfd = ref<number | null>(null);
+const fd3 = ref<number | null>(null);
+const disfdcc = ref<number | null>(null);
+const keepBitItems = [{ title: "Keep current", value: null }, { title: "0", value: 0 }, { title: "1", value: 1 }];
+const hasChopperExtras = computed(() => family.value.chopperUserFields.includes("tpfd"));
+const chopperExtras = computed<ChopperExtras>(() => ({
+	tpfd: typeof tpfd.value === "number" && Number.isFinite(tpfd.value) ? Math.min(15, Math.max(0, Math.trunc(tpfd.value))) : null,
+	fd3: fd3.value,
+	disfdcc: disfdcc.value,
+}));
 const pwmFreqTargetHz = ref<number>(55000);
 // Hysteresis maths basis: "rms" (Klipper/validated default) or "peak" (Trinamic calc-sheet exact).
 const hysteresisBasis = ref<"rms" | "peak">("rms");
@@ -479,7 +495,7 @@ const advancedPlan = computed<AdvancedPlan | undefined>(() => {
 	if (!m) return undefined;
 	return { coolStep: coolStep.value, stallGuard: stallGuard.value, fclk: fclk.value, stepsPerRev: m.stepsPerRev, sgValue: sgValue.value };
 });
-const writes = computed(() => (result.value ? buildRegisterWrites(family.value, driver.value, result.value, currentRegs.value, thresholds.value, advancedPlan.value) : []));
+const writes = computed(() => (result.value ? buildRegisterWrites(family.value, driver.value, result.value, currentRegs.value, thresholds.value, advancedPlan.value, chopperExtras.value) : []));
 
 const configBlock = computed(() => buildConfigBlock(writes.value, {
 	driver: driver.value, chip: chip.value, motor: vendor.value === CUSTOM ? "custom motor" : motorId.value ?? undefined, volts: volts.value,
@@ -494,7 +510,8 @@ function fieldSummary(register: string): string {
 	if (register === "CHOPCONF") {
 		const f = decodeFields(family.value.registers.chopconf, w.word);
 		// Show LOGICAL hstrt/hend (the datasheet values), not the offset-encoded field values.
-		return `toff ${f.toff}, tbl ${f.tbl}, hstrt ${f.hstrt + 1}, hend ${f.hend - 3}`;
+		const extra = hasChopperExtras.value ? `, tpfd ${f.tpfd}, fd3 ${f.fd3}, disfdcc ${f.disfdcc}` : "";
+		return `toff ${f.toff}, tbl ${f.tbl}, hstrt ${f.hstrt + 1}, hend ${f.hend - 3}${extra}`;
 	}
 	if (register === "PWMCONF") {
 		const f = decodeFields(family.value.registers.pwmconf, w.word);
@@ -583,7 +600,7 @@ async function applyNow(): Promise<void> {
 	applyingRegs.value = true;
 	try {
 		for (const w of writes.value) {
-			await machineStore.sendCode(w.command, false, false);
+			await machineStore.sendCode(w.chopperCommand ?? w.command, false, false); // logReply=false: no reply toasts
 		}
 		uiStore.makeNotification(LogLevel.success, i18n.global.t("plugins.duetTmcTuner.title"), `Wrote ${writes.value.length} register(s) to driver ${driver.value}.`);
 	} catch (e) {
@@ -724,7 +741,7 @@ function resetToDefault(): void {
 	volts.value = Math.round(readVin(machineStore.model) ?? 24);
 	runCurrent.value = null;
 	fclk.value = family.value.fclk;
-	toff.value = 3; tbl.value = 1; extraHysteresis.value = 0; pwmFreqTargetHz.value = family.value.pwmFreqTarget;
+	toff.value = 3; tbl.value = 1; extraHysteresis.value = 0; tpfd.value = null; fd3.value = null; disfdcc.value = null; pwmFreqTargetHz.value = family.value.pwmFreqTarget;
 	mode.value = "chopperOnly";
 	hysteresisBasis.value = "rms"; currentScaleCs.value = 31;
 	coolStep.value = false; stallGuard.value = false; sgValue.value = family.value.stallGuard.default;
@@ -777,12 +794,13 @@ async function copyDiagnostics(): Promise<void> {
 }
 
 // ── Persistence + initial OM-derived defaults ──────────────────────────────────────────────────
-watch([vendor, motorId, chip, driver, volts, fclk, toff, tbl, extraHysteresis, pwmFreqTargetHz, mode, hysteresisBasis, currentScaleCs, coolStep, stallGuard, sgValue, custom, customUnits], () => {
+watch([vendor, motorId, chip, driver, volts, fclk, toff, tbl, extraHysteresis, tpfd, fd3, disfdcc, pwmFreqTargetHz, mode, hysteresisBasis, currentScaleCs, coolStep, stallGuard, sgValue, custom, customUnits], () => {
 	try {
 		localStorage.setItem(LS_STATE, JSON.stringify({
 			vendor: vendor.value, motorId: motorId.value, chip: chip.value, driver: driver.value,
 			volts: volts.value, fclk: fclk.value, toff: toff.value, tbl: tbl.value,
-			extraHysteresis: extraHysteresis.value, pwmFreqTargetHz: pwmFreqTargetHz.value, mode: mode.value,
+			extraHysteresis: extraHysteresis.value, tpfd: tpfd.value, fd3: fd3.value, disfdcc: disfdcc.value,
+			pwmFreqTargetHz: pwmFreqTargetHz.value, mode: mode.value,
 			hysteresisBasis: hysteresisBasis.value, currentScaleCs: currentScaleCs.value,
 			coolStep: coolStep.value, stallGuard: stallGuard.value, sgValue: sgValue.value,
 			custom: { ...custom }, customUnits: { ...customUnits },
@@ -804,6 +822,9 @@ onMounted(async () => {
 			if (typeof s.toff === "number") toff.value = s.toff;
 			if (typeof s.tbl === "number") tbl.value = s.tbl;
 			if (typeof s.extraHysteresis === "number") extraHysteresis.value = s.extraHysteresis;
+			tpfd.value = typeof s.tpfd === "number" ? s.tpfd : null;
+			fd3.value = s.fd3 === 0 || s.fd3 === 1 ? s.fd3 : null;
+			disfdcc.value = s.disfdcc === 0 || s.disfdcc === 1 ? s.disfdcc : null;
 			if (typeof s.pwmFreqTargetHz === "number") pwmFreqTargetHz.value = s.pwmFreqTargetHz;
 			if (typeof s.mode === "string") mode.value = s.mode;
 			if (s.hysteresisBasis === "rms" || s.hysteresisBasis === "peak") hysteresisBasis.value = s.hysteresisBasis;

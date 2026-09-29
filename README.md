@@ -47,6 +47,13 @@ A Duet Web Control **3.7** plugin (Vue 3 / Vuetify 4).
 - Picking a driver (while connected) **auto-detects the chip and reads the live registers**, and
   **Apply now stays disabled until the registers have been read**, so writes are always read-modify-write.
 
+- **CHOPCONF goes through `M569 P<d> C<n>`**, for both **Apply now** and **Copy for config.g**: RRF keeps
+  that value and re-applies it if it reprograms the driver (e.g. after `M350`/`M569 D`). The other
+  registers still use `M569.2`. `C` carries only the bits RRF lets you set — TOFF/HSTRT/HEND/TBL, plus
+  FD3/DISFDCC/TPFD on TMC2160/5160/2240 — and the **Advanced (chopper)** panel exposes TPFD, FD3 and
+  DISFDCC (blank / *Keep current* leaves the driver's value alone).
+- **Requires RepRapFirmware 3.7.0-rc.2 or later** (`M569 C` on CAN expansion boards and the extra bits).
+
 > ⚠️ Direct register writes are powerful. Always review the decoded values, test at low speed, and keep
 > a copy of your working config. RRF programs these registers itself from `M569`/`M906`/microstepping,
 > so the config.g block must go **after** that setup.

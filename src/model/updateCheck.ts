@@ -71,7 +71,7 @@ export async function runUpdateCheck(opts: { force?: boolean; notify?: boolean }
 	}
 	checking.value = true;
 	try {
-		const result = await checkForUpdate({ owner: OWNER, repo: REPO, currentVersion: currentVersion() });
+		const result = await checkForUpdate({ owner: OWNER, repo: REPO, currentVersion: currentVersion(), assetPattern: PLUGIN_ASSET_PATTERN });
 		updateState.value = result;
 		safeSet(LS_LAST, String(Date.now()));
 		if (opts.notify && result.updateAvailable && dismissedVersion.value !== result.latestVersion && !isUpdateHostActive()) {
@@ -99,6 +99,9 @@ export function dismissCurrentUpdate(): void {
 		clearAnnouncedUpdate(PLUGIN_MANIFEST_ID);
 	}
 }
+
+/** The installable plugin ZIP only — releases also carry a `-srcmap.zip` debug asset that must never be installed. */
+const PLUGIN_ASSET_PATTERN = /^DuetTmcTuner-\d[\w.-]*(?<!-srcmap)\.zip$/i;
 
 export async function applyUpdateNow(): Promise<void> {
 	const result = updateState.value;
