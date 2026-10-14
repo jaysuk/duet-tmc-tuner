@@ -128,7 +128,7 @@ jobs:
           draft: false
           name: ${{ steps.title.outputs.name }}
           body: ${{ steps.changelog.outputs.body }}
-          files: plugin/DuetTmcTuner-*.zip
+          files: plugin/DuetTmcTuner-*[0-9].zip
 
       - name: Upload ZIP as an artifact (manual runs)
         if: github.event_name == 'workflow_dispatch'
