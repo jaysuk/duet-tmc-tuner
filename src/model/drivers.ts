@@ -38,6 +38,13 @@ export interface DriverFamily {
 	 * bits itself). 22xx: TOFF/HSTRT/HEND/TBL; 2160/5160/2240 also TPFD/FD3/DISFDCC (RRF 3.7.0-rc.2+).
 	 */
 	chopperUserFields: ReadonlyArray<string>;
+	/**
+	 * Whether PWMCONF can be read back over `M569.2`. It is write-only on the TMC2160/5160, so a read
+	 * returns nothing useful and the bits the tuner keeps come from `pwmconfDefault` instead.
+	 */
+	pwmconfReadable: boolean;
+	/** PWMCONF as RRF programs it at start-up (`DefaultPwmConfReg`); RRF never changes it afterwards. */
+	pwmconfDefault: number;
 	/** TPWMTHRS (stealthChop↔spreadCycle switch). Single 20-bit value in field `value`. */
 	tpwmthrs: RegisterDef;
 	/** THIGH (→ fullstep) — only the SPI families have it; null otherwise. */
@@ -170,6 +177,8 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		blankCycles: [16, 24, 32, 40],
 		registers: { chopconf: tmc22xxChopconf, pwmconf: sharedPwmconf },
 		chopperUserFields: ["toff", "hstrt", "hend", "tbl"],
+		pwmconfReadable: true,
+		pwmconfDefault: 0xC10D0024, // RRF TMC22xx.cpp DefaultPwmConfReg
 		tpwmthrs: reg20("TPWMTHRS", 0x13),
 		thigh: null, // 22xx has no THIGH register
 		hasSg4: true, // 2209 has SG4 (2208 doesn't, but the family default suits the common 2209)
@@ -188,6 +197,8 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		blankCycles: [16, 24, 36, 54],
 		registers: { chopconf: tmc51xxChopconf, pwmconf: sharedPwmconf },
 		chopperUserFields: ["toff", "hstrt", "hend", "tbl", "fd3", "disfdcc", "tpfd"],
+		pwmconfReadable: false, // PWMCONF is write-only on the TMC2160/5160
+		pwmconfDefault: 0xC40C001E, // RRF TMC51xx.cpp DefaultPwmConfReg
 		tpwmthrs: reg20("TPWMTHRS", 0x13),
 		thigh: reg20("THIGH", 0x15),
 		hasSg4: false, // 5160 uses SGT, not an SG4 threshold register
@@ -206,6 +217,8 @@ export const DRIVER_FAMILIES: Record<FamilyId, DriverFamily> = {
 		blankCycles: [16, 24, 36, 54],
 		registers: { chopconf: tmc51xxChopconf, pwmconf: sharedPwmconf },
 		chopperUserFields: ["toff", "hstrt", "hend", "tbl", "fd3", "disfdcc", "tpfd"],
+		pwmconfReadable: true,
+		pwmconfDefault: 0xC40C001E, // RRF TMC51xx.cpp (SPI build); only used until PWMCONF is read back
 		tpwmthrs: reg20("TPWMTHRS", 0x13),
 		thigh: reg20("THIGH", 0x15),
 		hasSg4: true,

@@ -222,6 +222,8 @@ export function readRunCurrent(model: unknown, driverId: string): number | null 
  * Returns an unsigned 32-bit number, or null when nothing parses.
  */
 export function parseRegisterValue(reply: string | null | undefined): number | null {
+	// An error ("Driver number 0.7 out of range", "Failed to read register") must not parse as a value.
+	if (replyError(reply)) return null;
 	const text = reply ?? "";
 	// Prefer the token right after "value"/"=" (the value, not the register address before it).
 	const tagged = text.match(/(?:value|=)\s*(0x[0-9a-fA-F]{1,8}|\d+)/i);
@@ -235,4 +237,24 @@ export function parseRegisterValue(reply: string | null | undefined): number | n
 	const ints = text.match(/\d+/g);
 	if (ints && ints.length) return Number(ints[ints.length - 1]) >>> 0;
 	return null;
+}
+
+/**
+ * The error line of a G-code reply, or null when the code succeeded. DWC's `sendCode` resolves with
+ * RRF's reply text rather than throwing, so a rejected command ("Error: M569: Bad ccr for driver 0.0")
+ * has to be spotted in the text.
+ */
+export function replyError(reply: string | null | undefined): string | null {
+	const m = (reply ?? "").match(/^\s*Error\b.*$/im);
+	return m ? m[0].trim() : null;
+}
+
+/**
+ * RRF's stored chopper control bits from an `M569 P<d>` report ("…, mode stealthChop, ccr 0x080053,
+ * toff 3, …"). Since 3.7.0-rc.2 `ccr` is exactly the bits `M569 C` can set. Null when absent.
+ */
+export function parseChopperReport(reply: string | null | undefined): number | null {
+	if (replyError(reply)) return null;
+	const m = (reply ?? "").match(/\bccr\s+0x([0-9a-fA-F]{1,8})\b/);
+	return m ? parseInt(m[1], 16) >>> 0 : null;
 }

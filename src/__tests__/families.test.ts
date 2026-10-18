@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { computeAutotune, computeThresholds } from "../model/autotune";
-import { buildConfigBlock, buildRegisterWrites } from "../model/apply";
+import { buildConfigBlock, buildReadCommands, buildRegisterWrites, chopperSettingsError, chopperWordError } from "../model/apply";
 import { DRIVER_FAMILIES, familyForChip, supportedFamilies } from "../model/drivers";
 
 const TEST_MOTOR = { resistance: 1.5, inductance: 0.0015, holdingTorque: 0.45, maxCurrent: 2, stepsPerRev: 200 };
@@ -47,7 +47,7 @@ describe("driver families", () => {
 		const live = 0x14FFFFFF;
 		const c = (fam: keyof typeof DRIVER_FAMILIES) => {
 			const w = buildRegisterWrites(DRIVER_FAMILIES[fam], "0.0", r, { chopconf: live }).find((x) => x.register === "CHOPCONF")!;
-			return Number(w.chopperCommand!.match(/C(\d+)$/)![1]);
+			return Number(w.rrfCommand!.match(/C(\d+)$/)![1]);
 		};
 		// 22xx: TOFF/HSTRT/HEND/TBL only -> no TPFD/FD3/DISFDCC/VSENSE/MRES leak through.
 		expect(c("tmc22xx") & ~0x187FF).toBe(0);
@@ -75,13 +75,13 @@ describe("driver families", () => {
 		expect((w.word >>> 20) & 0xF).toBe(7);
 		expect((w.word >>> 11) & 1).toBe(1);
 		expect((w.word >>> 12) & 1).toBe(1);
-		expect(w.chopperCommand).toContain(` C${w.word & 0xF19FFF}`);
+		expect(w.rrfCommand).toContain(` C${w.word & 0xF19FFF}`);
 		// null = keep the live value
 		expect((chop("tmc5160", { tpfd: null, fd3: null, disfdcc: null }).word >>> 20) & 0xF).toBe(0xA);
 		// 22xx has no such user bits: a stray override must not touch the word or C
 		const w22 = chop("tmc22xx", { tpfd: 7, fd3: 1, disfdcc: 1 });
 		expect(w22.word).toBe(chop("tmc22xx", {}).word);
-		expect(w22.chopperCommand).toBe(chop("tmc22xx", {}).chopperCommand);
+		expect(w22.rrfCommand).toBe(chop("tmc22xx", {}).rrfCommand);
 	});
 
 	it("chopperOnly writes only CHOPCONF + PWMCONF", () => {
@@ -102,6 +102,82 @@ describe("driver families", () => {
 		const regs22 = buildRegisterWrites(DRIVER_FAMILIES.tmc22xx, "0.0", r, {}, th22).map((w) => w.register);
 		expect(regs22).toContain("TPWMTHRS");
 		expect(regs22).not.toContain("THIGH");
+	});
+
+	it("CHOPCONF user bits come from RRF's reported ccr (M569) over the live M569.2 read", () => {
+		const r = computeAutotune(TEST_MOTOR, { volts: 24, fclk: 12_000_000 });
+		// Live read: MRES 8 + TPFD 2 (and TOFF 0 because the driver is disabled). RRF's ccr says TPFD 5.
+		const live = (8 << 24) | (2 << 20);
+		const ccr = (5 << 20) | 0x10053;
+		const w = buildRegisterWrites(DRIVER_FAMILIES.tmc5160, "0.0", r, { chopconf: live, ccr }).find((x) => x.register === "CHOPCONF")!;
+		expect((w.word >>> 24) & 0xF).toBe(8); // non-user bits still from the live word
+		expect((w.word >>> 20) & 0xF).toBe(5); // keep-current TPFD = RRF's stored value
+		expect(w.word & 0xF).toBe(r.chopconf.toff);
+	});
+
+	it("PWMCONF base: RRF's default on write-only 5160, the read-back where readable", () => {
+		const r = computeAutotune(TEST_MOTOR, { volts: 24, fclk: 12_000_000 });
+		const pwm = (fam: keyof typeof DRIVER_FAMILIES, cur: object) =>
+			buildRegisterWrites(DRIVER_FAMILIES[fam], "0.0", r, cur).find((x) => x.register === "PWMCONF")!.word;
+		const tunedMask = 0xFFFFF; // ofs, grad, freq, autoscale, autograd
+		// 5160: a bogus "read" of the write-only register is ignored; RRF's 0xC40C001E supplies PWM_REG/PWM_LIM.
+		expect((pwm("tmc5160", { pwmconf: 0 }) & ~tunedMask) >>> 0).toBe(0xC4000000);
+		expect(buildReadCommands(DRIVER_FAMILIES.tmc5160, "0.0").pwmconf).toBeNull();
+		// 2209: the read-back is used.
+		expect((pwm("tmc22xx", { pwmconf: 0x5A300000 }) & ~tunedMask) >>> 0).toBe(0x5A300000);
+		expect(buildReadCommands(DRIVER_FAMILIES.tmc22xx, "0.0").pwmconf).toBe("M569.2 P0.0 R112");
+		expect(buildReadCommands(DRIVER_FAMILIES.tmc22xx, "0.0").report).toBe("M569 P0.0");
+	});
+
+	it("validates TOFF/TBL and the final word the way RRF's SetChopConf does", () => {
+		expect(chopperSettingsError(3, 1)).toBeNull();
+		expect(chopperSettingsError(0, 1)).toMatch(/TOFF/);
+		expect(chopperSettingsError(16, 1)).toMatch(/TOFF/);
+		expect(chopperSettingsError(2.5, 1)).toMatch(/TOFF/);
+		expect(chopperSettingsError(3, 4)).toMatch(/TBL/);
+		expect(chopperSettingsError(1, 1)).toMatch(/TBL 2/);
+		expect(chopperSettingsError(1, 2)).toBeNull();
+		const fam = DRIVER_FAMILIES.tmc22xx;
+		expect(chopperWordError(fam, 0x8083)).toBeNull();
+		expect(chopperWordError(fam, 0x8080)).toMatch(/TOFF/); // TOFF 0
+		expect(chopperWordError(fam, 0x8000 | (7 << 4) | (10 << 7) | 3)).toMatch(/HSTRT/); // 7 + 10 > 16
+	});
+
+	it("the autotune's HSTRT/HEND always pass RRF's raw HSTRT + HEND ≤ 16 check", () => {
+		for (const extra of [0, 5, 20]) {
+			for (const L of [0.0005, 0.002, 0.02]) {
+				const r = computeAutotune({ ...TEST_MOTOR, inductance: L }, { volts: 48, fclk: 12_000_000, extraHysteresis: extra });
+				expect(r.chopconf.hstrt + r.chopconf.hend).toBeLessThanOrEqual(16);
+				expect(r.chopconf.hend).toBeGreaterThanOrEqual(0);
+			}
+		}
+	});
+
+	it("CoolStep/StallGuard are sent through M915 so RRF keeps its own stall state", () => {
+		const r = computeAutotune(TEST_MOTOR, { volts: 24, fclk: 12_000_000 });
+		const w09 = buildRegisterWrites(DRIVER_FAMILIES.tmc22xx, "0.0", r, {}, undefined,
+			{ coolStep: true, stallGuard: true, fclk: 12_000_000, stepsPerRev: 200, sgValue: 40 });
+		const cmd = (ws: typeof w09, reg: string) => ws.find((x) => x.register === reg)!.rrfCommand;
+		// 0.75 rev/s × 200 full steps = 150 full steps/s; TCOOLTHRS word per RRF's formula.
+		expect(cmd(w09, "TCOOLTHRS")).toBe("M915 P0.0 H150");
+		expect(w09.find((x) => x.register === "TCOOLTHRS")!.word).toBe(Math.floor((12_000_000 + 128 * 150) / (256 * 150)));
+		// SGTHRS 40 → M915 S = 127 − 40.
+		expect(cmd(w09, "SGTHRS")).toBe("M915 P0.0 S87");
+		const cool09 = w09.find((x) => x.register === "COOLCONF")!;
+		expect(cool09.rrfCommand).toBe(`M915 P0.0 T${cool09.word & 0xFFFF}`);
+
+		// 5160 StallGuard only: SGT via S, CoolStep bits untouched (no T).
+		const w5160 = buildRegisterWrites(DRIVER_FAMILIES.tmc5160, "121.0", r, {}, undefined,
+			{ coolStep: false, stallGuard: true, fclk: 12_000_000, stepsPerRev: 200, sgValue: -5 });
+		expect(cmd(w5160, "COOLCONF")).toBe("M915 P121.0 S-5");
+		// Out-of-range thresholds are clamped to the family range.
+		const wClamp = buildRegisterWrites(DRIVER_FAMILIES.tmc5160, "0.0", r, {}, undefined,
+			{ coolStep: true, stallGuard: true, fclk: 12_000_000, stepsPerRev: 200, sgValue: 100 });
+		expect(cmd(wClamp, "COOLCONF")).toMatch(/^M915 P0\.0 S63 T\d+$/);
+		// config.g uses the M915 lines too.
+		const block = buildConfigBlock(w5160, { driver: "121.0", chip: "TMC5160", volts: 24 });
+		expect(block).toMatch(/^M915 P121\.0 H150 +; TCOOLTHRS/m);
+		expect(block).not.toMatch(/M569\.2 P121\.0 R(20|109)\b/);
 	});
 
 	it("CoolStep/StallGuard: 22xx uses SGTHRS, SPI uses SGT in COOLCONF", () => {

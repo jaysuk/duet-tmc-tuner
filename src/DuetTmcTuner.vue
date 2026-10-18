@@ -14,8 +14,9 @@
 							<v-alert type="info" density="compact" variant="tonal" class="mb-4">
 								Computes spreadCycle chopper (CHOPCONF) and stealthChop (PWMCONF) register values from a
 								motor's electrical specs — plus optional stealthChop↔spreadCycle thresholds — and writes them
-								<strong>directly to the driver registers</strong> with <code>M569.2</code>. Read the live
-								registers first so only the tuned fields change (your microstep/current bits are kept).
+								to the driver: CHOPCONF through <code>M569 C</code> (so RRF keeps it), CoolStep/StallGuard through
+								<code>M915</code>, the rest <strong>directly</strong> with <code>M569.2</code>. Read the live registers
+								first so only the tuned fields change (your microstep/current bits are kept).
 							</v-alert>
 							<div class="d-flex justify-end mb-2">
 								<v-btn size="small" variant="text" prepend-icon="mdi-backup-restore" @click="resetToDefault"
@@ -117,17 +118,17 @@
 												<template v-else>
 													<v-switch v-model="coolStep" color="primary" density="compact" hide-details>
 														<template #label>CoolStep (dynamic current)
-															<HelpTip text="Automatically lowers run current when the motor is not near stalling, and raises it back under load. Writes TCOOLTHRS + COOLCONF." :href="DOC.stall" />
+															<HelpTip text="Automatically lowers run current when the motor is not near stalling, and raises it back under load. Sets TCOOLTHRS + COOLCONF's CoolStep fields via M915 H/T." :href="DOC.stall" />
 														</template>
 													</v-switch>
 													<v-switch v-model="stallGuard" color="primary" density="compact" hide-details>
 														<template #label>StallGuard (sensorless)
-															<HelpTip text="Sensorless-homing stall detection. Writes the StallGuard threshold (SGTHRS on 2209/2226, SGT-in-COOLCONF on 5160/2240) and shares TCOOLTHRS with CoolStep." :href="DOC.stall" />
+															<HelpTip text="Sensorless-homing stall detection. Sets the StallGuard threshold via M915 S (RRF maps it to SGTHRS on 2209/2226, SGT in COOLCONF on 5160/2240) and shares TCOOLTHRS with CoolStep." :href="DOC.stall" />
 														</template>
 													</v-switch>
 													<v-text-field v-if="stallGuard" v-model.number="sgValue" type="number" :min="sgRange.min" :max="sgRange.max"
 														              density="compact" variant="outlined" hide-details class="mt-2" :label="sgRange.label">
-															<template #append-inner><HelpTip text="StallGuard threshold. Higher = less sensitive. Affects sensorless homing and usually needs tuning per machine." :href="DOC.stall" /></template>
+															<template #append-inner><HelpTip :text="`StallGuard threshold — ${sgRange.direction}. Sent as M915 S. Affects sensorless homing and usually needs tuning per machine.`" :href="DOC.stall" /></template>
 														</v-text-field>
 													<v-alert v-if="coolStep || stallGuard" type="warning" density="compact" variant="tonal" class="mt-2">
 														These change dynamic current / sensorless-homing sensitivity. Test carefully — the StallGuard threshold usually needs per-machine tuning.
@@ -152,9 +153,13 @@
 										   :loading="detecting" @click="detectChip">Detect chip</v-btn>
 									<v-btn size="small" variant="tonal" prepend-icon="mdi-download-network" :disabled="!isConnected || busy"
 										   :loading="reading" @click="readBack">Read current registers</v-btn>
-									<v-btn size="small" color="primary" prepend-icon="mdi-upload-network" :disabled="!isConnected || busy || !hasRead"
+									<v-btn size="small" color="primary" prepend-icon="mdi-upload-network" :disabled="!isConnected || busy || !hasRead || !!chopperError"
 										   :loading="applyingRegs" @click="applyNow">Apply now</v-btn>
 								</div>
+
+								<v-alert v-if="chopperError" type="error" density="compact" variant="tonal" class="mb-3">
+									{{ chopperError }} Fix it under <strong>Advanced (chopper)</strong> before applying.
+								</v-alert>
 
 								<v-alert v-if="!hasRead" type="info" density="compact" variant="tonal" class="mb-3">
 									Registers not read yet — <strong>Apply now</strong> is disabled until the live values are read
@@ -171,7 +176,7 @@
 											<td class="font-weight-medium">{{ w.register }}</td>
 											<td>{{ fieldSummary(w.register) }}</td>
 											<td><code>0x{{ hex(w.word) }}</code></td>
-											<td><code>{{ w.chopperCommand ?? w.command }}</code></td>
+											<td><code>{{ commandFor(w) }}</code></td>
 										</tr>
 									</tbody>
 								</v-table>
@@ -248,10 +253,15 @@ import { LogLevel, useUiStore } from "@/stores/ui";
 import { AboutPanel, type AboutExtraAction, buildReport, copyReport, HelpTip } from "dwc-plugin-runtime";
 
 import { computeAutotune, computeThresholds, type AutotuneResult, type MotorInput, type TuningMode } from "./model/autotune";
-import { type AdvancedPlan, buildConfigBlock, type ChopperExtras, buildReadCommands, buildRegisterWrites, type CurrentRegisters } from "./model/apply";
+import {
+	type AdvancedPlan, buildConfigBlock, type ChopperExtras, buildReadCommands, buildRegisterWrites, chopperSettingsError,
+	chopperWordError, commandFor, type CurrentRegisters,
+} from "./model/apply";
 import { DRIVER_FAMILIES, familyForChip, supportedFamilies, supportsCoolStep } from "./model/drivers";
 import { LS_STATE, PLUGIN_MANIFEST_ID } from "./model/constants";
-import { chipFromIoin, discoverDrivers, IOIN_ADDRESSES, parseRegisterValue, peakToRms, readRunCurrent, readVin } from "./model/machine";
+import {
+	chipFromIoin, discoverDrivers, IOIN_ADDRESSES, parseChopperReport, parseRegisterValue, peakToRms, readRunCurrent, readVin, replyError,
+} from "./model/machine";
 import { MOTOR_DATABASE, type MotorSpec } from "./model/motorDatabase";
 import { emptyStore, loadStore, parseStore, saveStore, type TunerStore } from "./model/storage";
 import { decodeFields } from "./model/registers";
@@ -417,7 +427,9 @@ const sgValue = ref<number>(DRIVER_FAMILIES.tmc22xx.stallGuard.default);
 const advancedSupported = computed(() => supportsCoolStep(chip.value));
 const sgRange = computed(() => {
 	const sg = family.value.stallGuard;
-	return { min: sg.min, max: sg.max, label: sg.kind === "sgthrs" ? "SGTHRS (0–255)" : "SGT (−64…63)" };
+	return sg.kind === "sgthrs"
+		? { min: sg.min, max: sg.max, label: "SGTHRS (0–255)", direction: "higher = more sensitive" }
+		: { min: sg.min, max: sg.max, label: "SGT (−64…63)", direction: "higher = less sensitive" };
 });
 
 // When the chip changes, snap fclk + PWM-freq target + StallGuard default to that family's values.
@@ -477,7 +489,7 @@ const result = computed<AutotuneResult | null>(() => {
 });
 
 const currentRegs = ref<CurrentRegisters>({});
-const hasRead = computed(() => currentRegs.value.chopconf !== undefined || currentRegs.value.pwmconf !== undefined);
+const hasRead = computed(() => currentRegs.value.ccr !== undefined || currentRegs.value.chopconf !== undefined);
 
 const thresholds = computed(() => {
 	const r = result.value;
@@ -497,7 +509,15 @@ const advancedPlan = computed<AdvancedPlan | undefined>(() => {
 });
 const writes = computed(() => (result.value ? buildRegisterWrites(family.value, driver.value, result.value, currentRegs.value, thresholds.value, advancedPlan.value, chopperExtras.value) : []));
 
-const configBlock = computed(() => buildConfigBlock(writes.value, {
+// RRF rejects an M569 C that fails these checks ("Bad ccr"), so catch it before Apply / config.g.
+const chopperError = computed<string | null>(() => {
+	const inputs = chopperSettingsError(toff.value, tbl.value);
+	if (inputs) return inputs;
+	const chop = writes.value.find((w) => w.register === "CHOPCONF");
+	return chop ? chopperWordError(family.value, chop.word) : null;
+});
+
+const configBlock = computed(() => chopperError.value ? `; ${chopperError.value}` : buildConfigBlock(writes.value, {
 	driver: driver.value, chip: chip.value, motor: vendor.value === CUSTOM ? "custom motor" : motorId.value ?? undefined, volts: volts.value,
 }));
 
@@ -519,8 +539,11 @@ function fieldSummary(register: string): string {
 	}
 	if (register === "COOLCONF") {
 		const f = decodeFields(family.value.coolconf, w.word);
-		const sgt = "sgt" in f ? `, sgt ${(f.sgt << 25) >> 25}` : ""; // sign-extend 7-bit
-		return `semin ${f.semin}, semax ${f.semax}, seup ${f.seup}, sedn ${f.sedn}, seimin ${f.seimin}${sgt}`;
+		// M915 only changes what was asked for: the CoolStep fields (T) and/or SGT (S).
+		const parts: Array<string> = [];
+		if (coolStep.value) parts.push(`semin ${f.semin}, semax ${f.semax}, seup ${f.seup}, sedn ${f.sedn}, seimin ${f.seimin}`);
+		if (stallGuard.value && "sgt" in f) parts.push(`sgt ${(f.sgt << 25) >> 25}`); // sign-extend 7-bit
+		return parts.join(", ");
 	}
 	if (register === "SGTHRS") {
 		return `SGTHRS ${w.word >>> 0}`;
@@ -540,6 +563,15 @@ const sleepMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /** Read one driver register word over M569.2 for the selected driver. */
 async function readReg(addr: number): Promise<number | null> {
 	return parseRegisterValue(await machineStore.sendCode(`M569.2 P${driver.value} R${addr}`, false, false));
+}
+/**
+ * Run an M569.2 read twice and keep the second answer. RRF has a single "special read" slot per driver
+ * and returns whatever it last fetched, so a read left over from an earlier timed-out/abandoned request
+ * (common on CAN expansion boards, which give up after 50 ms) answers the next request with a stale value.
+ */
+async function readFresh(code: string): Promise<number | null> {
+	await machineStore.sendCode(code, false, false);
+	return parseRegisterValue(await machineStore.sendCode(code, false, false));
 }
 
 // Identify the chip on the selected driver by reading its IOIN VERSION byte (the reliable way on the
@@ -576,14 +608,13 @@ async function readBack(): Promise<void> {
 	if (!isConnected.value) return;
 	reading.value = true;
 	try {
-		const [chopCmd, pwmCmd] = buildReadCommands(family.value, driver.value);
-		// Prime: the first M569.2 read after a page load can be stale — discard one, then read for real.
-		await machineStore.sendCode(chopCmd, false, false);
-		const chopReply = await machineStore.sendCode(chopCmd, false, false);
-		const pwmReply = await machineStore.sendCode(pwmCmd, false, false);
+		const cmds = buildReadCommands(family.value, driver.value);
+		// RRF's stored chopper bits (what M569 C sets) — reported by M569 since 3.7.0-rc.2.
+		const ccr = parseChopperReport(await machineStore.sendCode(cmds.report, false, false));
 		currentRegs.value = {
-			chopconf: parseRegisterValue(chopReply) ?? undefined,
-			pwmconf: parseRegisterValue(pwmReply) ?? undefined,
+			ccr: ccr ?? undefined,
+			chopconf: (await readFresh(cmds.chopconf)) ?? undefined,
+			pwmconf: cmds.pwmconf ? (await readFresh(cmds.pwmconf)) ?? undefined : undefined,
 		};
 		if (!hasRead.value) {
 			uiStore.makeNotification(LogLevel.warning, i18n.global.t("plugins.duetTmcTuner.title"), "Couldn't parse the register read-back — check the driver number.");
@@ -597,12 +628,22 @@ async function readBack(): Promise<void> {
 
 async function applyNow(): Promise<void> {
 	if (!isConnected.value || !writes.value.length) return;
+	if (chopperError.value) return;
 	applyingRegs.value = true;
+	const title = i18n.global.t("plugins.duetTmcTuner.title");
 	try {
-		for (const w of writes.value) {
-			await machineStore.sendCode(w.chopperCommand ?? w.command, false, false); // logReply=false: no reply toasts
+		const list = writes.value;
+		for (const [i, w] of list.entries()) {
+			const code = commandFor(w);
+			// logReply=false: no reply toasts. sendCode resolves with RRF's reply even when the code failed.
+			const err = replyError(await machineStore.sendCode(code, false, false));
+			if (err) {
+				const done = i ? ` (${list.slice(0, i).map((x) => x.register).join(", ")} already written)` : "";
+				uiStore.makeNotification(LogLevel.error, title, `${w.register}: ${code} failed — ${err}${done}`);
+				return;
+			}
 		}
-		uiStore.makeNotification(LogLevel.success, i18n.global.t("plugins.duetTmcTuner.title"), `Wrote ${writes.value.length} register(s) to driver ${driver.value}.`);
+		uiStore.makeNotification(LogLevel.success, title, `Wrote ${list.length} register(s) to driver ${driver.value}.`);
 	} catch (e) {
 		uiStore.makeNotification(LogLevel.error, i18n.global.t("plugins.duetTmcTuner.title"), (e as Error)?.message ?? String(e));
 	} finally {
@@ -776,7 +817,7 @@ function onToggleChecks(value: boolean | null): void {
 	if (on) void runUpdateCheck({ force: true });
 }
 // Count comes from the bundled MOTOR_DATABASE, so it tracks the upstream sync automatically on each build.
-const aboutDescription = computed(() => `Derives spreadCycle (CHOPCONF) and stealthChop (PWMCONF) register values from a motor's datasheet specs and supply voltage, then writes them straight to the driver with M569.2. Built-in database of ${MOTOR_DATABASE.length} motors.`);
+const aboutDescription = computed(() => `Derives spreadCycle (CHOPCONF) and stealthChop (PWMCONF) register values from a motor's datasheet specs and supply voltage, then writes them to the driver (M569 C for CHOPCONF, M915 for CoolStep/StallGuard, M569.2 for the rest). Built-in database of ${MOTOR_DATABASE.length} motors.`);
 const aboutExtraActions = computed<Array<AboutExtraAction>>(() => [
 	{ label: "Copy diagnostic report", icon: "mdi-content-copy", onClick: () => { void copyDiagnostics(); } },
 ]);

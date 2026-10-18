@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { boardFamily, chipFromIoin, discoverDrivers, listDrivers, parseRegisterValue, readRunCurrent, readVin } from "../model/machine";
+import { boardFamily, chipFromIoin, discoverDrivers, listDrivers, parseChopperReport, parseRegisterValue, readRunCurrent, readVin, replyError } from "../model/machine";
 
 describe("parseRegisterValue", () => {
 	it("parses a hex value after 'value'", () => {
@@ -21,6 +21,38 @@ describe("parseRegisterValue", () => {
 	it("returns null when nothing parses", () => {
 		expect(parseRegisterValue("no value here")).toBeNull();
 		expect(parseRegisterValue(null)).toBeNull();
+	});
+	it("parses RRF 3.7's exact M569.2 read reply", () => {
+		expect(parseRegisterValue("Register 0x6c value 0x08028083")).toBe(0x08028083);
+	});
+	it("never turns an error reply into a value", () => {
+		expect(parseRegisterValue("Error: M569.2: Driver number 0.7 out of range")).toBeNull();
+		expect(parseRegisterValue("Error: M569.2: Failed to read register")).toBeNull();
+	});
+});
+
+describe("replyError", () => {
+	it("finds RRF's error line", () => {
+		expect(replyError("Error: M569: Bad ccr for driver 0.0")).toBe("Error: M569: Bad ccr for driver 0.0");
+		expect(replyError("Warning: something\nError: M915: bad")).toBe("Error: M915: bad");
+	});
+	it("treats empty, normal and warning replies as success", () => {
+		expect(replyError("")).toBeNull();
+		expect(replyError(null)).toBeNull();
+		expect(replyError("Register 0x6c value 0x00000000")).toBeNull();
+		expect(replyError("Warning: driver 0.0 does not support this")).toBeNull();
+	});
+});
+
+describe("parseChopperReport", () => {
+	it("reads the ccr from an M569 report (RRF 3.7.0-rc.2+ format)", () => {
+		const reply = "Drive 0 runs forwards, active low enable, step timing fast, mode stealthChop, ccr 0xa18053, toff 3, tblank 1, "
+			+ "thigh 200 (100.0 mm/sec), gs 0, iRun/iHold 22/11, current 1200.0, tcoolthrs 2000 (12.3 mm/sec), pos 512";
+		expect(parseChopperReport(reply)).toBe(0xA18053);
+	});
+	it("returns null without a ccr or on an error", () => {
+		expect(parseChopperReport("Drive 0.3 runs forwards, active high enable, step timing fast")).toBeNull();
+		expect(parseChopperReport("Error: M569: Driver number 0.9 out of range")).toBeNull();
 	});
 });
 

@@ -53,7 +53,7 @@ describe("end-to-end: reference motor -> M569.2 writes (from a zero base)", () =
 		{ resistance: 6.5, inductance: 0.013, holdingTorque: 0.49, maxCurrent: 1, stepsPerRev: 200 },
 		{ volts: 24, fclk: 12_500_000 },
 	);
-	const writes = buildRegisterWrites(DRIVER_FAMILIES.tmc22xx, "0.0", r, {});
+	const writes = buildRegisterWrites(DRIVER_FAMILIES.tmc22xx, "0.0", r, { chopconf: 0, pwmconf: 0 });
 
 	it("produces the expected CHOPCONF and PWMCONF words/commands", () => {
 		const chopW = writes.find((w) => w.register === "CHOPCONF")!;
