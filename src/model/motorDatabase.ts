@@ -22,7 +22,7 @@ export interface MotorSpec {
 	stepsPerRev: number;
 }
 
-/** 203 motors, compiled from manufacturer datasheets. */
+/** 204 motors, compiled from manufacturer datasheets. */
 export const MOTOR_DATABASE: ReadonlyArray<MotorSpec> = [
 	{ id: "act-17hs4417", vendor: "ACT", resistance: 1.5, inductance: 0.0028, holdingTorque: 0.4, maxCurrent: 1.7, stepsPerRev: 200 },
 	{ id: "biqu-35BYGF0713-A-10HZT", vendor: "BIQU", resistance: 2.3, inductance: 0.002, holdingTorque: 0.11, maxCurrent: 1.5, stepsPerRev: 200 },
@@ -184,6 +184,7 @@ export const MOTOR_DATABASE: ReadonlyArray<MotorSpec> = [
 	{ id: "siboor-42sth40-2004a", vendor: "Siboor", resistance: 1.1, inductance: 0.0026, holdingTorque: 0.45, maxCurrent: 2, stepsPerRev: 200 },
 	{ id: "siboor-42sth48-2504(s45)", vendor: "Siboor", resistance: 0.9, inductance: 0.0016, holdingTorque: 0.6, maxCurrent: 2.5, stepsPerRev: 200 },
 	{ id: "23hs30-2804s-sg30", vendor: "StepperOnline", resistance: 1.13, inductance: 0.0054, holdingTorque: 1.89, maxCurrent: 2.8, stepsPerRev: 200 },
+	{ id: "23hs30-3004s", vendor: "StepperOnline", resistance: 1.13, inductance: 0.0048, holdingTorque: 1.89, maxCurrent: 3, stepsPerRev: 200 },
 	{ id: "omc-14hr07-1004vrn", vendor: "StepperOnline", resistance: 3.9, inductance: 0.002, holdingTorque: 0.09, maxCurrent: 1, stepsPerRev: 400 },
 	{ id: "omc-14hs10-0404s", vendor: "StepperOnline", resistance: 30, inductance: 0.03, holdingTorque: 0.14, maxCurrent: 0.4, stepsPerRev: 200 },
 	{ id: "omc-14hs11-1004s", vendor: "StepperOnline", resistance: 3.5, inductance: 0.0035, holdingTorque: 0.125, maxCurrent: 1, stepsPerRev: 200 },
